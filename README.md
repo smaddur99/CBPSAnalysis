@@ -16,7 +16,7 @@ You can install the development version of CBPSAnalysis like so:
 
 ``` r
 # Install from GitHub (once uploaded)
-devtools::install_github("yourusername/CBPSAnalysis")
+devtools::install_github("smaddur99/CBPSAnalysis")
 
 # Or install locally
 devtools::install("path/to/CBPSAnalysis")
