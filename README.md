@@ -4,14 +4,22 @@
 <!-- badges: start -->
 <!-- badges: end -->
 
-The goal of CBPSAnalysis is to ...
+The goal of CBPSAnalysis is to do Function for CBPS 
+(covariate balancing propensity score) weighted GLM analysis with imputation 
+and checks built in.
 
 ## Installation
 
 You can install the development version of CBPSAnalysis like so:
 
+
+
 ``` r
-# FILL THIS IN! HOW CAN PEOPLE INSTALL YOUR DEV PACKAGE?
+# Install from GitHub (once uploaded)
+devtools::install_github("yourusername/CBPSAnalysis")
+
+# Or install locally
+devtools::install("path/to/CBPSAnalysis")
 ```
 
 ## Example
