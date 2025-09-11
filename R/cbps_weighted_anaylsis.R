@@ -540,6 +540,7 @@ cbps_weighted_analysis <- function(
       ci_lower = NA_real_,
       ci_upper = NA_real_
     )
+  }
     # 9. RETURN RESULTS
     return(list(
       data = df_final,
