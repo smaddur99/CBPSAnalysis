@@ -542,6 +542,15 @@ cbps_weighted_analysis <- function(
     )
   }
 
+  # Debug prints
+  if (verbose) {
+    cat("Debug: About to create return list\n")
+    cat("Debug: initial_n exists:", exists("initial_n"), "\n")
+    cat("Debug: final_n exists:", exists("final_n"), "\n")
+    if (exists("initial_n")) cat("Debug: initial_n value:", initial_n, "\n")
+    if (exists("final_n")) cat("Debug: final_n value:", final_n, "\n")
+  }
+
   final_n <- nrow(df_final)
   if (verbose) cat(paste("Analysis completed. Final sample size:", final_n, "\n"))
 
