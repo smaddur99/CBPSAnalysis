@@ -461,7 +461,7 @@ cbps_weighted_analysis <- function(
                         data = df_final,
                         weights = cbps_weights$weights)
 
-  # 8. BOOTSTRAPPING
+  # 8. BOOTSTRAPPING (Robust version)
   if (verbose) cat("Step 8: Performing bootstrap analysis...\n")
 
   boot_data <- df_final %>%
@@ -469,37 +469,75 @@ cbps_weighted_analysis <- function(
 
   set.seed(bootstrap_seed)
 
+  # Robust bootstrap function with error handling
   boot_fun <- function(data, indices) {
-    d <- data[indices, ]
-    model <- glm(outcome_formula, data = d, weights = weight)
-    coef(model)[predictor_vars]
+    tryCatch({
+      d <- data[indices, ]
+
+      # Check if bootstrap sample has sufficient variation
+      if (length(unique(d[[treatment_var]])) < 2) {
+        return(rep(NA, length(predictor_vars)))
+      }
+
+      model <- glm(outcome_formula, data = d, weights = weight)
+
+      # Check if model converged
+      if (!model$converged) {
+        return(rep(NA, length(predictor_vars)))
+      }
+
+      coeffs <- coef(model)
+      result <- coeffs[predictor_vars]
+
+      # Ensure we return the right length vector
+      if (length(result) != length(predictor_vars)) {
+        return(rep(NA, length(predictor_vars)))
+      }
+
+      return(as.numeric(result))
+
+    }, error = function(e) {
+      return(rep(NA, length(predictor_vars)))
+    })
   }
 
+  # Run bootstrap with better error handling
   boot_results <- replicate(bootstrap_n, {
     sample_idx <- sample(1:nrow(boot_data), replace = TRUE)
     boot_fun(boot_data, sample_idx)
-  }, simplify = "matrix")
+  }, simplify = FALSE)  # Don't simplify initially
 
-  # Bootstrap summary
-  boot_summary <- tibble(
-    term = predictor_vars,
-    estimate = rowMeans(boot_results, na.rm = TRUE),
-    se = apply(boot_results, 1, sd, na.rm = TRUE),
-    ci_lower = apply(boot_results, 1, quantile, probs = 0.025, na.rm = TRUE),
-    ci_upper = apply(boot_results, 1, quantile, probs = 0.975, na.rm = TRUE)
-  )
+  # Convert to matrix and handle failures
+  boot_matrix <- do.call(cbind, boot_results)
+  rownames(boot_matrix) <- predictor_vars
 
-  final_n <- nrow(df_final)
-  if (verbose) cat(paste("Analysis completed. Final sample size:", final_n, "\n"))
+  # Check if we have any successful bootstrap samples
+  successful_boots <- apply(boot_matrix, 2, function(x) !all(is.na(x)))
+  n_successful <- sum(successful_boots)
 
-  # 9. RETURN RESULTS
-  return(list(
-    data = df_final,
-    model = weighted_model,
-    weights = cbps_weights,
-    balance = balance_table,
-    bootstrap_summary = boot_summary,
-    bootstrap_results = boot_results,
-    sample_sizes = list(initial = initial_n, final = final_n)
-  ))
-}
+  if (verbose) cat(paste("Successful bootstrap samples:", n_successful, "out of", bootstrap_n, "\n"))
+
+  if (n_successful < 10) {
+    warning("Very few successful bootstrap samples (", n_successful, "). Results may be unreliable.")
+  }
+
+  # Calculate bootstrap summary only from successful samples
+  if (n_successful > 0) {
+    boot_summary <- tibble(
+      term = predictor_vars,
+      estimate = rowMeans(boot_matrix[, successful_boots, drop = FALSE], na.rm = TRUE),
+      se = apply(boot_matrix[, successful_boots, drop = FALSE], 1, sd, na.rm = TRUE),
+      ci_lower = apply(boot_matrix[, successful_boots, drop = FALSE], 1, quantile, probs = 0.025, na.rm = TRUE),
+      ci_upper = apply(boot_matrix[, successful_boots, drop = FALSE], 1, quantile, probs = 0.975, na.rm = TRUE)
+    )
+  } else {
+    # Fallback if no bootstrap samples succeeded
+    warning("No successful bootstrap samples. Using GLM standard errors.")
+    boot_summary <- tibble(
+      term = predictor_vars,
+      estimate = coef(weighted_model)[predictor_vars],
+      se = summary(weighted_model)$coefficients[predictor_vars, "Std. Error"],
+      ci_lower = NA_real_,
+      ci_upper = NA_real_
+    )
+  }
