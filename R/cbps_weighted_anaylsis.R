@@ -540,4 +540,14 @@ cbps_weighted_analysis <- function(
       ci_lower = NA_real_,
       ci_upper = NA_real_
     )
-  }
+    # 9. RETURN RESULTS
+    return(list(
+      data = df_final,
+      model = weighted_model,
+      weights = cbps_weights,
+      balance = balance_table,
+      bootstrap_summary = boot_summary,
+      bootstrap_results = boot_matrix,  # Changed from boot_results
+      sample_sizes = list(initial = initial_n, final = final_n)
+    ))
+  }  # <-- Make sure this closing brace is here!
