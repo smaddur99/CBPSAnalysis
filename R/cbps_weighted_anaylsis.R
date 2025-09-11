@@ -542,17 +542,17 @@ cbps_weighted_analysis <- function(
     )
   }
 
-  final_n <- nrow(df_final)  # <-- ADD THIS LINE
+  final_n <- nrow(df_final)
   if (verbose) cat(paste("Analysis completed. Final sample size:", final_n, "\n"))
 
-    # 9. RETURN RESULTS
-    return(list(
-      data = df_final,
-      model = weighted_model,
-      weights = cbps_weights,
-      balance = balance_table,
-      bootstrap_summary = boot_summary,
-      bootstrap_results = boot_matrix,  # Changed from boot_results
-      sample_sizes = list(initial = initial_n, final = final_n)
-    ))
-  }  # <-- Make sure this closing brace is here!
+  # 9. RETURN RESULTS
+  return(list(
+    data = df_final,
+    model = weighted_model,
+    weights = cbps_weights,
+    balance = balance_table,
+    bootstrap_summary = boot_summary,
+    bootstrap_results = boot_matrix,
+    sample_sizes = list(initial = initial_n, final = final_n)
+  ))
+}  # This is the main function closing brace
