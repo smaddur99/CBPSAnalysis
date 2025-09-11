@@ -556,3 +556,4 @@ cbps_weighted_analysis <- function(
     sample_sizes = list(initial = initial_n, final = final_n)
   ))
 }  # This is the main function closing brace
+
