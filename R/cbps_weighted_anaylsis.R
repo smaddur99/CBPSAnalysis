@@ -541,6 +541,10 @@ cbps_weighted_analysis <- function(
       ci_upper = NA_real_
     )
   }
+
+  final_n <- nrow(df_final)  # <-- ADD THIS LINE
+  if (verbose) cat(paste("Analysis completed. Final sample size:", final_n, "\n"))
+
     # 9. RETURN RESULTS
     return(list(
       data = df_final,
