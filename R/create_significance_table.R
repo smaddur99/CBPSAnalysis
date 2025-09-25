@@ -58,7 +58,7 @@
 #' )
 #' }
 #'
-#' @seealso \code{\link{check_treatment_significance}}, \code{\link{quick_treatment_table}}, \code{\link{full_treatment_table}}
+#' @seealso \code{\link{check_treatment_significance}}
 #' @export
 #' @importFrom gt gt cols_label fmt_number tab_header tab_style cell_text cell_fill cells_body cells_column_labels cells_title cols_hide cols_align tab_footnote tab_options gtsave md px
 #' @importFrom dplyr select all_of mutate case_when arrange filter
