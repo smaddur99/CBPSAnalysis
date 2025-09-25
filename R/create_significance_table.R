@@ -14,6 +14,7 @@
 #' @param font_family Character. Font family for the table (default: "Times New Roman")
 #' @param show_all_models Logical. Whether to show all models or just significant ones (default: FALSE)
 #' @param alpha_threshold Numeric. Threshold for highlighting significance (default: 0.05)
+#' @param include_subtitle Logical. Whether to include treatment variable subtitle (default: FALSE)
 #'
 #' @return A gt table object that can be displayed or saved
 #'
@@ -21,7 +22,7 @@
 #' This function creates publication-ready tables using the gt package with:
 #' \itemize{
 #'   \item Professional formatting suitable for academic papers
-#'   \item Significance highlighting (green background for significant results)
+#'   \item Significance highlighting (light blue background for significant results)
 #'   \item Confidence intervals for both GLM and bootstrap estimates
 #'   \item Balance assessment ratios
 #'   \item Sample size information
@@ -72,7 +73,8 @@ create_significance_table <- function(
     font_size = 16,
     font_family = "Times New Roman",
     show_all_models = FALSE,
-    alpha_threshold = 0.05
+    alpha_threshold = 0.05,
+    include_subtitle = FALSE
 ) {
 
   # Load required libraries
@@ -203,7 +205,7 @@ create_significance_table <- function(
       glm_conf_int = "95% CI",
       bootstrap_conf_int = "Bootstrap 95% CI",
       p_value_formatted = "P-Value",
-      balance_ratio = "Balanced",
+      balance_ratio = "Covariates Balanced",
       sample_size_col = "N"
     )
   } else {
@@ -224,23 +226,34 @@ create_significance_table <- function(
       glm_estimate = "Estimate",
       glm_conf_int = "95% CI",
       p_value_formatted = "P-Value",
-      balance_ratio = "Balanced",
+      balance_ratio = "Covariates Balanced",
       sample_size_col = "N"
     )
   }
 
-  # Create the GT table
-  gt_table <- table_final %>%
-    gt::gt() %>%
-    gt::cols_label(.list = col_labels) %>%
+  # Create the GT table with conditional subtitle
+  if (include_subtitle) {
+    gt_table <- table_final %>%
+      gt::gt() %>%
+      gt::cols_label(.list = col_labels) %>%
+      gt::tab_header(
+        title = gt::md(table_title),
+        subtitle = gt::md(paste("Treatment Variable:", treatment_label))
+      )
+  } else {
+    gt_table <- table_final %>%
+      gt::gt() %>%
+      gt::cols_label(.list = col_labels) %>%
+      gt::tab_header(
+        title = gt::md(table_title)
+      )
+  }
+
+  gt_table <- gt_table %>%
     gt::fmt_number(
       columns = c("glm_estimate",
                   if("bootstrap_estimate" %in% names(table_final)) "bootstrap_estimate" else NULL),
       decimals = decimal_places
-    ) %>%
-    gt::tab_header(
-      title = gt::md(table_title),
-      subtitle = gt::md(paste("Treatment Variable:", treatment_label))
     ) %>%
 
     # Style the model names
@@ -249,10 +262,10 @@ create_significance_table <- function(
       locations = gt::cells_body(columns = "pretty_model")
     ) %>%
 
-    # Highlight significant results
+    # Highlight significant results with light blue
     gt::tab_style(
       style = list(
-        gt::cell_fill(color = "#e8f5e8"),
+        gt::cell_fill(color = "#e3f2fd"),  # Light blue instead of green
         gt::cell_text(weight = "bold")
       ),
       locations = gt::cells_body(rows = table_final$row_id[table_final$is_significant])
@@ -288,28 +301,35 @@ create_significance_table <- function(
     gt::cols_align(align = "right", columns = contains("estimate")) %>%
 
     # Hide utility columns
-    gt::cols_hide(columns = c("row_id", "is_significant")) %>%
+    gt::cols_hide(columns = c("row_id", "is_significant"))
 
-    # Add footnote explaining significance stars
+  # Add footnotes in consistent order
+  footnote_counter <- 1
+
+  # Footnote 1: Significance stars
+  gt_table <- gt_table %>%
     gt::tab_footnote(
-      footnote = "* p < 0.05, ** p < 0.01, *** p < 0.001",
+      footnote = paste0(footnote_counter, " * p < 0.05, ** p < 0.01, *** p < 0.001"),
       locations = gt::cells_column_labels(columns = "p_value_formatted")
-    ) %>%
-
-    # Add footnote about highlighting
-    gt::tab_footnote(
-      footnote = paste("Significant results (p <", alpha_threshold, ") are highlighted in green"),
-      locations = gt::cells_title()
     )
+  footnote_counter <- footnote_counter + 1
 
-  # Add balance footnote if balance data is available
+  # Footnote 2: Balance explanation if balance data is available
   if ("balance_ratio" %in% names(table_final) && any(!is.na(table_final$balance_ratio))) {
     gt_table <- gt_table %>%
       gt::tab_footnote(
-        footnote = "Balanced = Number of covariates with |standardized difference| < 0.1",
+        footnote = paste0(footnote_counter, " Covariates Balanced = Number of covariates with |standardized difference| < 0.1 out of total covariates"),
         locations = gt::cells_column_labels(columns = "balance_ratio")
       )
+    footnote_counter <- footnote_counter + 1
   }
+
+  # Footnote 3: Significance highlighting
+  gt_table <- gt_table %>%
+    gt::tab_footnote(
+      footnote = paste0(footnote_counter, " Significant results (p < ", alpha_threshold, ") are highlighted in light blue"),
+      locations = gt::cells_title()
+    )
 
   # Save if filename provided
   if (!is.null(filename)) {
@@ -359,7 +379,8 @@ quick_treatment_table <- function(sig_results, title = "Treatment Significance A
     include_bootstrap = TRUE,
     decimal_places = 3,
     show_all_models = FALSE,  # Only show significant models by default
-    alpha_threshold = 0.05
+    alpha_threshold = 0.05,
+    include_subtitle = FALSE  # No subtitle by default
   )
 }
 
@@ -394,6 +415,7 @@ full_treatment_table <- function(sig_results, title = "Treatment Effects: All Mo
     include_bootstrap = TRUE,
     decimal_places = 3,
     show_all_models = TRUE,  # Show all models
-    alpha_threshold = 0.05
+    alpha_threshold = 0.05,
+    include_subtitle = FALSE  # No subtitle by default
   )
 }
