@@ -305,62 +305,7 @@ create_significance_table <- function(
     # Hide utility columns
     gt::cols_hide(columns = c("row_id", "is_significant"))
 
-  # DEBUG: Print column information
-  cat("\nDEBUG - Column names in table_final:\n")
-  print(names(table_final))
-  cat("\nDEBUG - Column labels being used:\n")
-  print(col_labels)
-
-  # COMPLETELY CLEAN FOOTNOTE SECTION - Add footnotes one at a time
-
-  # Find column positions - more robust method
-  all_cols <- names(table_final)
-  cat("\nDEBUG - All columns:", paste(all_cols, collapse = ", "), "\n")
-
-  p_value_col_pos <- which(all_cols == "p_value_formatted")
-  balance_col_pos <- which(all_cols == "balance_ratio")
-
-  cat("DEBUG - P-value column position:", p_value_col_pos, "\n")
-  cat("DEBUG - Balance column position:", balance_col_pos, "\n")
-
-  # Method 1: Try by column name first
-  tryCatch({
-    if ("p_value_formatted" %in% all_cols) {
-      cat("Adding footnote to P-Value column by name\n")
-      gt_table <- gt_table %>%
-        gt::tab_footnote(
-          footnote = "* p < 0.05, ** p < 0.01, *** p < 0.001",
-          locations = gt::cells_column_labels(columns = "p_value_formatted")
-        )
-    }
-  }, error = function(e) {
-    cat("ERROR adding P-value footnote by name:", e$message, "\n")
-  })
-
-  # Method 2: Add balance footnote by name
-  tryCatch({
-    if ("balance_ratio" %in% all_cols && any(!is.na(table_final$balance_ratio))) {
-      cat("Adding footnote to Balance column by name\n")
-      gt_table <- gt_table %>%
-        gt::tab_footnote(
-          footnote = "Covariates Balanced = Number of covariates with |standardized difference| < 0.1 out of total covariates",
-          locations = gt::cells_column_labels(columns = "balance_ratio")
-        )
-    }
-  }, error = function(e) {
-    cat("ERROR adding Balance footnote by name:", e$message, "\n")
-  })
-
-  # Method 3: Add highlighting note as source note (NO footnote, NO superscript)
-  tryCatch({
-    cat("Adding source note for highlighting\n")
-    gt_table <- gt_table %>%
-      gt::tab_source_note(
-        source_note = paste("Significant results (p <", alpha_threshold, ") are highlighted in light blue")
-      )
-  }, error = function(e) {
-    cat("ERROR adding source note:", e$message, "\n")
-  })
+  # NO FOOTNOTES - Clean and simple table
 
   # Save if filename provided
   if (!is.null(filename)) {
