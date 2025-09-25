@@ -77,12 +77,14 @@ create_significance_table <- function(
     include_subtitle = FALSE
 ) {
 
-  # Load required libraries
+  # Since this is part of a package, dependencies should already be available
+  # Just check that required packages are accessible
   required_packages <- c("dplyr", "gt", "tibble")
-  for (pkg in required_packages) {
-    if (!require(pkg, character.only = TRUE, quietly = TRUE)) {
-      stop(paste("Package", pkg, "is required but not installed."))
-    }
+  missing_packages <- required_packages[!sapply(required_packages, requireNamespace, quietly = TRUE)]
+
+  if (length(missing_packages) > 0) {
+    stop("Missing required packages: ", paste(missing_packages, collapse = ", "),
+         "\nTry restarting R and reinstalling CBPSAnalysis package.")
   }
 
   # Extract results - handle both direct dataframe and list input
@@ -303,32 +305,28 @@ create_significance_table <- function(
     # Hide utility columns
     gt::cols_hide(columns = c("row_id", "is_significant"))
 
-  # Add footnotes in consistent order
-  footnote_counter <- 1
+  # Add footnotes - gt automatically numbers them, so don't include manual numbers
 
-  # Footnote 1: Significance stars
+  # Footnote 1: Significance stars (attached to P-Value column)
   gt_table <- gt_table %>%
     gt::tab_footnote(
-      footnote = paste0(footnote_counter, " * p < 0.05, ** p < 0.01, *** p < 0.001"),
+      footnote = "* p < 0.05, ** p < 0.01, *** p < 0.001",
       locations = gt::cells_column_labels(columns = "p_value_formatted")
     )
-  footnote_counter <- footnote_counter + 1
 
   # Footnote 2: Balance explanation if balance data is available
   if ("balance_ratio" %in% names(table_final) && any(!is.na(table_final$balance_ratio))) {
     gt_table <- gt_table %>%
       gt::tab_footnote(
-        footnote = paste0(footnote_counter, " Covariates Balanced = Number of covariates with |standardized difference| < 0.1 out of total covariates"),
+        footnote = "Covariates Balanced = Number of covariates with |standardized difference| < 0.1 out of total covariates",
         locations = gt::cells_column_labels(columns = "balance_ratio")
       )
-    footnote_counter <- footnote_counter + 1
   }
 
-  # Footnote 3: Significance highlighting
+  # Add significance highlighting as a source note instead of footnote
   gt_table <- gt_table %>%
-    gt::tab_footnote(
-      footnote = paste0(footnote_counter, " Significant results (p < ", alpha_threshold, ") are highlighted in light blue"),
-      locations = gt::cells_title()
+    gt::tab_source_note(
+      source_note = paste("Note: Significant results (p <", alpha_threshold, ") are highlighted in light blue")
     )
 
   # Save if filename provided
