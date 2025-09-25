@@ -15,7 +15,8 @@ create_significance_table(
   font_size = 16,
   font_family = "Times New Roman",
   show_all_models = FALSE,
-  alpha_threshold = 0.05
+  alpha_threshold = 0.05,
+  include_subtitle = FALSE
 )
 }
 \arguments{
@@ -40,6 +41,8 @@ create_significance_table(
 \item{show_all_models}{Logical. Whether to show all models or just significant ones (default: FALSE)}
 
 \item{alpha_threshold}{Numeric. Threshold for highlighting significance (default: 0.05)}
+
+\item{include_subtitle}{Logical. Whether to include treatment variable subtitle (default: FALSE)}
 }
 \value{
 A gt table object that can be displayed or saved
@@ -52,7 +55,7 @@ suitable for publication or presentation.
 This function creates publication-ready tables using the gt package with:
 \itemize{
 \item Professional formatting suitable for academic papers
-\item Significance highlighting (green background for significant results)
+\item Significance highlighting (light blue background for significant results)
 \item Confidence intervals for both GLM and bootstrap estimates
 \item Balance assessment ratios
 \item Sample size information
