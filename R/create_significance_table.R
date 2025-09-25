@@ -305,23 +305,43 @@ create_significance_table <- function(
     # Hide utility columns
     gt::cols_hide(columns = c("row_id", "is_significant"))
 
-  # Add footnotes - CLEAN VERSION with no title superscripts
-  # Only add footnotes to column headers, never to title
+  # DEBUG: Print column information
+  cat("\nDEBUG - Column names in table_final:\n")
+  print(names(table_final))
+  cat("\nDEBUG - Column labels being used:\n")
+  print(col_labels)
 
-  # Add significance stars footnote to P-Value column header
-  gt_table <- gt_table %>%
-    gt::tab_footnote(
-      footnote = "* p < 0.05, ** p < 0.01, *** p < 0.001",
-      locations = gt::cells_column_labels(columns = "p_value_formatted")
-    )
+  # Add footnotes using column positions to avoid name matching issues
 
-  # Add balance footnote to Covariates Balanced column header (if balance data exists)
-  if ("balance_ratio" %in% names(table_final) && any(!is.na(table_final$balance_ratio))) {
+  # Find column positions
+  p_value_col_pos <- which(names(table_final) == "p_value_formatted")
+  balance_col_pos <- which(names(table_final) == "balance_ratio")
+
+  cat("\nDEBUG - P-value column position:", p_value_col_pos, "\n")
+  cat("DEBUG - Balance column position:", balance_col_pos, "\n")
+
+  # Add significance stars footnote
+  if (length(p_value_col_pos) > 0) {
+    cat("Adding footnote to P-value column\n")
+    gt_table <- gt_table %>%
+      gt::tab_footnote(
+        footnote = "* p < 0.05, ** p < 0.01, *** p < 0.001",
+        locations = gt::cells_column_labels(columns = p_value_col_pos)
+      )
+  } else {
+    cat("WARNING: P-value column not found!\n")
+  }
+
+  # Add balance footnote if balance data exists
+  if (length(balance_col_pos) > 0 && "balance_ratio" %in% names(table_final) && any(!is.na(table_final$balance_ratio))) {
+    cat("Adding footnote to Balance column\n")
     gt_table <- gt_table %>%
       gt::tab_footnote(
         footnote = "Covariates Balanced = Number of covariates with |standardized difference| < 0.1 out of total covariates",
-        locations = gt::cells_column_labels(columns = "balance_ratio")
+        locations = gt::cells_column_labels(columns = balance_col_pos)
       )
+  } else {
+    cat("WARNING: Balance column not found or no balance data!\n")
   }
 
   # Add highlighting explanation as source note (no superscript)
