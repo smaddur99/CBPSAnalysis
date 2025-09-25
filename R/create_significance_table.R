@@ -305,16 +305,17 @@ create_significance_table <- function(
     # Hide utility columns
     gt::cols_hide(columns = c("row_id", "is_significant"))
 
-  # Add footnotes - gt automatically numbers them, so don't include manual numbers
+  # Add footnotes - CLEAN VERSION with no title superscripts
+  # Only add footnotes to column headers, never to title
 
-  # Footnote 1: Significance stars (attached to P-Value column)
+  # Add significance stars footnote to P-Value column header
   gt_table <- gt_table %>%
     gt::tab_footnote(
       footnote = "* p < 0.05, ** p < 0.01, *** p < 0.001",
       locations = gt::cells_column_labels(columns = "p_value_formatted")
     )
 
-  # Footnote 2: Balance explanation if balance data is available
+  # Add balance footnote to Covariates Balanced column header (if balance data exists)
   if ("balance_ratio" %in% names(table_final) && any(!is.na(table_final$balance_ratio))) {
     gt_table <- gt_table %>%
       gt::tab_footnote(
@@ -323,10 +324,10 @@ create_significance_table <- function(
       )
   }
 
-  # Add significance highlighting as a source note instead of footnote
+  # Add highlighting explanation as source note (no superscript)
   gt_table <- gt_table %>%
     gt::tab_source_note(
-      source_note = paste("Note: Significant results (p <", alpha_threshold, ") are highlighted in light blue")
+      source_note = paste("Significant results (p <", alpha_threshold, ") are highlighted in light blue")
     )
 
   # Save if filename provided
