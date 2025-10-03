@@ -52,7 +52,7 @@
 #'   table_title = "Covariate Balance After CBPS Weighting"
 #' )
 #'
-#' # Multiple models
+#' # Multiple models (like your h2a example)
 #' results_list <- list(
 #'   "Model 1" = extract_cbps_results(cbps_output1, include_balance_details = TRUE),
 #'   "Model 2" = extract_cbps_results(cbps_output2, include_balance_details = TRUE)
@@ -245,21 +245,21 @@ create_balance_table <- function(
       mean_balance_display = "SMD"
     )
 
-  # Add header with optional subtitle
+  # Add header with optional subtitle (matching create_significance_table style)
   if (!is.null(subtitle)) {
     gt_table <- gt_table %>%
       gt::tab_header(
-        title = gt::md(paste0("**", table_title, "**")),
+        title = gt::md(table_title),
         subtitle = gt::md(subtitle)
       )
   } else {
     gt_table <- gt_table %>%
       gt::tab_header(
-        title = gt::md(paste0("**", table_title, "**"))
+        title = gt::md(table_title)
       )
   }
 
-  # Apply styling
+  # Apply styling (matching create_significance_table style)
   gt_table <- gt_table %>%
     # Bold the model display values (non-empty cells)
     gt::tab_style(
@@ -270,7 +270,7 @@ create_balance_table <- function(
       )
     ) %>%
 
-    # General font styling
+    # Set font size for all elements
     gt::tab_style(
       style = gt::cell_text(size = font_size),
       locations = list(
@@ -279,11 +279,12 @@ create_balance_table <- function(
       )
     ) %>%
 
-    # Table options
+    # Table options (matching create_significance_table)
     gt::tab_options(
       table.font.size = gt::px(font_size),
       table.font.names = font_family,
       data_row.padding = gt::px(8),
+      row_group.padding = gt::px(8),
       heading.padding = gt::px(8)
     ) %>%
 
