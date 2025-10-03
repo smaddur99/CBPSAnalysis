@@ -93,5 +93,5 @@ table2 <- create_significance_table(
 
 }
 \seealso{
-\code{\link{check_treatment_significance}}, \code{\link{quick_treatment_table}}, \code{\link{full_treatment_table}}
+\code{\link{check_treatment_significance}}
 }
