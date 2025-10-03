@@ -11,11 +11,9 @@ create_balance_table(
   filename = NULL,
   model_labels = NULL,
   variable_labels = NULL,
-  smd_threshold = 0.1,
   decimal_places = 3,
   font_size = 16,
   font_family = "Times New Roman",
-  show_threshold_flag = TRUE,
   shade_alternating = TRUE
 )
 }
@@ -24,7 +22,7 @@ create_balance_table(
 \itemize{
 \item Single output from \code{\link{extract_cbps_results}} with include_balance_details = TRUE
 \item Named list of multiple outputs from \code{\link{extract_cbps_results}}
-\item Data frame with columns: variable, diff_adj (or mean_balance), and optionally model
+\item Data frame with columns: variable, diff_adj, var_ratio_adj, and optionally model
 }}
 
 \item{table_title}{Character. Title for the table (default: "Covariate Balance After Weighting")}
@@ -38,15 +36,11 @@ create_balance_table(
 \item{variable_labels}{Named character vector or function. Pretty names for variables.
 If a function, it should take variable names and return formatted names (default: NULL)}
 
-\item{smd_threshold}{Numeric. Threshold for flagging imbalanced covariates (default: 0.1)}
-
-\item{decimal_places}{Integer. Number of decimal places for SMD values (default: 3)}
+\item{decimal_places}{Integer. Number of decimal places for balance values (default: 3)}
 
 \item{font_size}{Integer. Font size for the table (default: 16)}
 
 \item{font_family}{Character. Font family for the table (default: "Times New Roman")}
-
-\item{show_threshold_flag}{Logical. Whether to add asterisk to values above threshold (default: TRUE)}
 
 \item{shade_alternating}{Logical. Whether to shade alternating model groups (default: TRUE)}
 }
@@ -61,19 +55,10 @@ CBPS model specifications, suitable for publication or presentation.
 This function creates publication-ready covariate balance tables using the gt package with:
 \itemize{
 \item Professional formatting suitable for academic papers
+\item Both SMD (standardized mean difference) and VR (variance ratio) columns
 \item Alternating row shading by model groups for easy reading
-\item Automatic flagging of imbalanced covariates (SMD > threshold)
 \item Support for single or multiple model comparisons
 \item Customizable variable and model labels
-}
-
-The function works with output from \code{extract_cbps_results()} and automatically
-extracts the balance statistics. It can handle:
-\itemize{
-\item Single model results
-\item Multiple models for comparison
-\item Custom variable naming functions
-\item Different SMD thresholds
 }
 }
 \examples{
@@ -82,29 +67,20 @@ extracts the balance statistics. It can handle:
 results <- extract_cbps_results(cbps_output, include_balance_details = TRUE)
 balance_table <- create_balance_table(
   balance_results = results,
-  table_title = "Covariate Balance After CBPS Weighting"
+  table_title = "Hypothesis 1: Parity Status",
+  subtitle = "Covariate Balance After Weighting"
 )
 
-# Multiple models (like your h2a example)
+# Multiple models
 results_list <- list(
   "Model 1" = extract_cbps_results(cbps_output1, include_balance_details = TRUE),
   "Model 2" = extract_cbps_results(cbps_output2, include_balance_details = TRUE)
 )
 balance_table <- create_balance_table(
   balance_results = results_list,
-  table_title = "Comparison of Covariate Balance",
+  table_title = "Hypothesis 1: Parity Status",
+  subtitle = "Covariate Balance After Weighting",
   model_labels = c("Model 1" = "Basic Specification", "Model 2" = "Full Model")
-)
-
-# With custom variable labels
-var_labels <- c(
-  "age" = "Age (years)",
-  "income" = "Annual Income ($)",
-  "education" = "Education Level"
-)
-balance_table <- create_balance_table(
-  balance_results = results,
-  variable_labels = var_labels
 )
 }
 
