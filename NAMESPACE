@@ -2,6 +2,8 @@
 
 export(cbps_weighted_analysis)
 export(check_treatment_significance)
+export(create_balance_table)
+export(create_f_sig_table)
 export(create_significance_table)
 export(extract_cbps_results)
 export(quick_results_summary)
