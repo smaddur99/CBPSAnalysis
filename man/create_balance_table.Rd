@@ -85,7 +85,7 @@ balance_table <- create_balance_table(
   table_title = "Covariate Balance After CBPS Weighting"
 )
 
-# Multiple models
+# Multiple models (like your h2a example)
 results_list <- list(
   "Model 1" = extract_cbps_results(cbps_output1, include_balance_details = TRUE),
   "Model 2" = extract_cbps_results(cbps_output2, include_balance_details = TRUE)

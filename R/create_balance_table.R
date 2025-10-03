@@ -7,7 +7,7 @@
 #'   \itemize{
 #'     \item Single output from \code{\link{extract_cbps_results}} with include_balance_details = TRUE
 #'     \item Named list of multiple outputs from \code{\link{extract_cbps_results}}
-#'     \item Data frame with columns: variable, diff_adj (or mean_balance), and optionally model
+#'     \item Data frame with columns: variable, diff_adj, var_ratio_adj, and optionally model
 #'   }
 #' @param table_title Character. Title for the table (default: "Covariate Balance After Weighting")
 #' @param subtitle Character. Optional subtitle for the table (default: NULL)
@@ -15,11 +15,9 @@
 #' @param model_labels Named character vector. Pretty names for models (default: NULL)
 #' @param variable_labels Named character vector or function. Pretty names for variables.
 #'   If a function, it should take variable names and return formatted names (default: NULL)
-#' @param smd_threshold Numeric. Threshold for flagging imbalanced covariates (default: 0.1)
-#' @param decimal_places Integer. Number of decimal places for SMD values (default: 3)
+#' @param decimal_places Integer. Number of decimal places for balance values (default: 3)
 #' @param font_size Integer. Font size for the table (default: 16)
 #' @param font_family Character. Font family for the table (default: "Times New Roman")
-#' @param show_threshold_flag Logical. Whether to add asterisk to values above threshold (default: TRUE)
 #' @param shade_alternating Logical. Whether to shade alternating model groups (default: TRUE)
 #'
 #' @return A gt table object that can be displayed or saved
@@ -28,19 +26,10 @@
 #' This function creates publication-ready covariate balance tables using the gt package with:
 #' \itemize{
 #'   \item Professional formatting suitable for academic papers
+#'   \item Both SMD (standardized mean difference) and VR (variance ratio) columns
 #'   \item Alternating row shading by model groups for easy reading
-#'   \item Automatic flagging of imbalanced covariates (SMD > threshold)
 #'   \item Support for single or multiple model comparisons
 #'   \item Customizable variable and model labels
-#' }
-#'
-#' The function works with output from \code{extract_cbps_results()} and automatically
-#' extracts the balance statistics. It can handle:
-#' \itemize{
-#'   \item Single model results
-#'   \item Multiple models for comparison
-#'   \item Custom variable naming functions
-#'   \item Different SMD thresholds
 #' }
 #'
 #' @examples
@@ -49,36 +38,28 @@
 #' results <- extract_cbps_results(cbps_output, include_balance_details = TRUE)
 #' balance_table <- create_balance_table(
 #'   balance_results = results,
-#'   table_title = "Covariate Balance After CBPS Weighting"
+#'   table_title = "Hypothesis 1: Parity Status",
+#'   subtitle = "Covariate Balance After Weighting"
 #' )
 #'
-#' # Multiple models (like your h2a example)
+#' # Multiple models
 #' results_list <- list(
 #'   "Model 1" = extract_cbps_results(cbps_output1, include_balance_details = TRUE),
 #'   "Model 2" = extract_cbps_results(cbps_output2, include_balance_details = TRUE)
 #' )
 #' balance_table <- create_balance_table(
 #'   balance_results = results_list,
-#'   table_title = "Comparison of Covariate Balance",
+#'   table_title = "Hypothesis 1: Parity Status",
+#'   subtitle = "Covariate Balance After Weighting",
 #'   model_labels = c("Model 1" = "Basic Specification", "Model 2" = "Full Model")
-#' )
-#'
-#' # With custom variable labels
-#' var_labels <- c(
-#'   "age" = "Age (years)",
-#'   "income" = "Annual Income ($)",
-#'   "education" = "Education Level"
-#' )
-#' balance_table <- create_balance_table(
-#'   balance_results = results,
-#'   variable_labels = var_labels
 #' )
 #' }
 #'
 #' @seealso \code{\link{extract_cbps_results}}
 #' @export
 #' @importFrom gt gt cols_label fmt_number tab_header tab_style cell_text cell_fill cells_body cells_column_labels cols_hide cols_align tab_options gtsave md px
-#' @importFrom dplyr select mutate case_when filter bind_rows arrange row_number
+#' @importFrom dplyr select mutate filter bind_rows row_number
+#' @importFrom rlang .data
 create_balance_table <- function(
     balance_results,
     table_title = "Covariate Balance After Weighting",
@@ -86,11 +67,9 @@ create_balance_table <- function(
     filename = NULL,
     model_labels = NULL,
     variable_labels = NULL,
-    smd_threshold = 0.1,
     decimal_places = 3,
     font_size = 16,
     font_family = "Times New Roman",
-    show_threshold_flag = TRUE,
     shade_alternating = TRUE
 ) {
 
@@ -113,20 +92,25 @@ create_balance_table <- function(
       stop("Input data frame must contain 'variable' column")
     }
 
-    # Check for SMD column (various possible names)
-    smd_col <- NULL
+    # Check for balance columns (various possible names)
     if ("diff_adj" %in% names(balance_data)) {
-      smd_col <- "diff_adj"
+      balance_data <- balance_data %>%
+        dplyr::mutate(mean_balance = abs(.data$diff_adj))
     } else if ("mean_balance" %in% names(balance_data)) {
-      smd_col <- "mean_balance"
-    } else if ("Diff.Adj" %in% names(balance_data)) {
-      smd_col <- "Diff.Adj"
+      # Already has mean_balance, keep it
+      balance_data <- balance_data
     } else {
-      stop("Input data frame must contain a standardized mean difference column (diff_adj, mean_balance, or Diff.Adj)")
+      stop("Input data frame must contain 'diff_adj' or 'mean_balance' column")
     }
 
-    balance_data <- balance_data %>%
-      dplyr::mutate(mean_balance = abs(!!rlang::sym(smd_col)))
+    # Check for variance ratio
+    if ("var_ratio_adj" %in% names(balance_data)) {
+      balance_data <- balance_data %>%
+        dplyr::mutate(variance_balance = .data$var_ratio_adj)
+    } else if (!"variance_balance" %in% names(balance_data)) {
+      # If no variance ratio exists, create NA column
+      balance_data$variance_balance <- NA
+    }
 
     # Add model column if not present
     if (!"model" %in% names(balance_data)) {
@@ -140,7 +124,8 @@ create_balance_table <- function(
       balance_data <- balance_results$balance %>%
         dplyr::mutate(
           model = "Model",
-          mean_balance = abs(diff_adj)
+          mean_balance = abs(.data$diff_adj),
+          variance_balance = if("var_ratio_adj" %in% names(.)) .data$var_ratio_adj else NA
         )
     } else {
       # Multiple models - named list of extract_cbps_results outputs
@@ -153,7 +138,8 @@ create_balance_table <- function(
           temp_df <- model_data$balance %>%
             dplyr::mutate(
               model = model_name,
-              mean_balance = abs(diff_adj)
+              mean_balance = abs(.data$diff_adj),
+              variance_balance = if("var_ratio_adj" %in% names(.)) .data$var_ratio_adj else NA
             )
           balance_list[[model_name]] <- temp_df
         }
@@ -173,9 +159,9 @@ create_balance_table <- function(
   if (!is.null(model_labels)) {
     balance_data <- balance_data %>%
       dplyr::mutate(
-        model = ifelse(model %in% names(model_labels),
-                       model_labels[model],
-                       model)
+        model = ifelse(.data$model %in% names(model_labels),
+                       model_labels[.data$model],
+                       .data$model)
       )
   }
 
@@ -184,68 +170,54 @@ create_balance_table <- function(
     if (is.function(variable_labels)) {
       # Apply function to create pretty labels
       balance_data <- balance_data %>%
-        dplyr::mutate(pretty_variable = variable_labels(variable))
+        dplyr::mutate(pretty_variable = variable_labels(.data$variable))
     } else if (is.character(variable_labels)) {
       # Use named vector for mapping
       balance_data <- balance_data %>%
         dplyr::mutate(
-          pretty_variable = ifelse(variable %in% names(variable_labels),
-                                   variable_labels[variable],
-                                   variable)
+          pretty_variable = ifelse(.data$variable %in% names(variable_labels),
+                                   variable_labels[.data$variable],
+                                   .data$variable)
         )
     }
   } else {
     # No labels provided - use variable names as-is
     balance_data <- balance_data %>%
-      dplyr::mutate(pretty_variable = variable)
+      dplyr::mutate(pretty_variable = .data$variable)
   }
 
   # STEP 4: Format the data for table
   table_data <- balance_data %>%
-    dplyr::select(model, pretty_variable, mean_balance) %>%
-    dplyr::filter(!is.na(mean_balance))
-
-  # Add threshold flag if requested
-  if (show_threshold_flag) {
-    table_data <- table_data %>%
-      dplyr::mutate(
-        mean_balance_display = ifelse(
-          mean_balance > smd_threshold,
-          paste0(sprintf(paste0("%.", decimal_places, "f"), mean_balance), "*"),
-          sprintf(paste0("%.", decimal_places, "f"), mean_balance)
-        )
-      )
-  } else {
-    table_data <- table_data %>%
-      dplyr::mutate(
-        mean_balance_display = sprintf(paste0("%.", decimal_places, "f"), mean_balance)
-      )
-  }
-
-  # STEP 5: Prepare for alternating shading
-  table_data <- table_data %>%
     dplyr::mutate(
-      model_display = ifelse(duplicated(model), "", as.character(model))
+      model = as.character(.data$model),
+      model_display = ifelse(duplicated(.data$model), "", .data$model)
     ) %>%
+    dplyr::filter(!is.na(.data$variance_balance) | !is.na(.data$mean_balance)) %>%
+    # Assign a block ID to each group of rows by model
+    dplyr::mutate(group_id = with(rle(.data$model), rep(seq_along(values), lengths))) %>%
+    # Create shading flag
     dplyr::mutate(
-      group_id = with(rle(model), rep(seq_along(values), lengths))
-    ) %>%
-    dplyr::mutate(
-      shade_flag = shade_alternating & (group_id %% 2 == 1),
+      shade_flag = shade_alternating & (.data$group_id %% 2 == 1),
       row_id = dplyr::row_number()
-    )
+    ) %>%
+    dplyr::select(.data$row_id, .data$model_display, .data$pretty_variable,
+                  .data$mean_balance, .data$variance_balance, .data$shade_flag)
 
-  # STEP 6: Create the gt table
+  # STEP 5: Create the gt table
   gt_table <- table_data %>%
-    dplyr::select(row_id, model_display, pretty_variable, mean_balance_display, shade_flag) %>%
     gt::gt() %>%
     gt::cols_label(
       model_display = "Model",
       pretty_variable = "Covariate",
-      mean_balance_display = "SMD"
+      mean_balance = "SMD",
+      variance_balance = "VR"
+    ) %>%
+    gt::fmt_number(
+      columns = c("mean_balance", "variance_balance"),
+      decimals = decimal_places
     )
 
-  # Add header with optional subtitle (matching create_significance_table style)
+  # Add header with optional subtitle
   if (!is.null(subtitle)) {
     gt_table <- gt_table %>%
       gt::tab_header(
@@ -259,14 +231,14 @@ create_balance_table <- function(
       )
   }
 
-  # Apply styling (matching create_significance_table style)
+  # Apply styling
   gt_table <- gt_table %>%
     # Bold the model display values (non-empty cells)
     gt::tab_style(
       style = gt::cell_text(weight = "bold"),
       locations = gt::cells_body(
         columns = "model_display",
-        rows = model_display != ""
+        rows = table_data$model_display != ""
       )
     ) %>%
 
@@ -279,7 +251,15 @@ create_balance_table <- function(
       )
     ) %>%
 
-    # Table options (matching create_significance_table)
+    # Apply highlight to every other model block
+    gt::tab_style(
+      style = gt::cell_fill(color = "#f7f7f7"),
+      locations = gt::cells_body(
+        rows = table_data$row_id[table_data$shade_flag]
+      )
+    ) %>%
+
+    # Table options
     gt::tab_options(
       table.font.size = gt::px(font_size),
       table.font.names = font_family,
@@ -290,22 +270,10 @@ create_balance_table <- function(
 
     # Alignment
     gt::cols_align(align = "left", columns = c("pretty_variable", "model_display")) %>%
-    gt::cols_align(align = "center", columns = "mean_balance_display") %>%
+    gt::cols_align(align = "center", columns = c("mean_balance", "variance_balance")) %>%
 
     # Hide utility columns
     gt::cols_hide(columns = c("row_id", "shade_flag"))
-
-  # Apply shading to alternating model groups if requested
-  if (shade_alternating) {
-    shaded_rows <- table_data$row_id[table_data$shade_flag]
-    if (length(shaded_rows) > 0) {
-      gt_table <- gt_table %>%
-        gt::tab_style(
-          style = gt::cell_fill(color = "#f7f7f7"),
-          locations = gt::cells_body(rows = shaded_rows)
-        )
-    }
-  }
 
   # Save if filename provided
   if (!is.null(filename)) {
@@ -314,17 +282,12 @@ create_balance_table <- function(
   }
 
   # Print summary
-  n_imbalanced <- sum(table_data$mean_balance > smd_threshold, na.rm = TRUE)
   n_total <- nrow(table_data)
-  n_models <- length(unique(table_data$model))
+  n_models <- length(unique(balance_data$model))
 
   cat("\nBalance Table Summary:\n")
   cat("  Number of models:", n_models, "\n")
-  cat("  Total covariates:", n_total, "\n")
-  cat("  Imbalanced covariates (SMD >", smd_threshold, "):", n_imbalanced, "\n")
-  if (show_threshold_flag) {
-    cat("  Note: * indicates SMD >", smd_threshold, "\n")
-  }
+  cat("  Total covariate rows:", n_total, "\n")
 
   return(gt_table)
 }
