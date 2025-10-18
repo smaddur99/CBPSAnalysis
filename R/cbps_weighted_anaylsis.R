@@ -119,9 +119,32 @@ cbps_weighted_analysis <- function(
   # 1. DATA PREPARATION AND CLEANING
   if (verbose) cat("Step 1: Preparing and cleaning data...\n")
 
-  # Build variable selection list
-  all_vars <- c(outcome_var, treatment_var, additional_predictors,
+  # NEW: Function to extract variable names from formula terms
+  extract_vars_from_formula <- function(terms) {
+    all_vars <- character(0)
+    for (term in terms) {
+      # Extract variables from interactions like "var1*var2" or "var1:var2"
+      vars <- unlist(strsplit(term, "[*:]"))
+      # Remove whitespace
+      vars <- trimws(vars)
+      all_vars <- c(all_vars, vars)
+    }
+    return(unique(all_vars))
+  }
+
+  # Extract actual variable names from additional_predictors (handles interactions)
+  if (!is.null(additional_predictors)) {
+    actual_predictor_vars <- extract_vars_from_formula(additional_predictors)
+  } else {
+    actual_predictor_vars <- character(0)
+  }
+
+  # Build variable selection list using extracted variables
+  all_vars <- c(outcome_var, treatment_var, actual_predictor_vars,
                 imputation_vars, imputation_predictors, propensity_covariates)
+
+  # Remove duplicates and empty strings
+  all_vars <- unique(all_vars[all_vars != ""])
 
   # Select and clean data
   df_clean <- data %>%
@@ -140,12 +163,15 @@ cbps_weighted_analysis <- function(
 
   # Remove additional_predictors that are NA if specified
   if (!is.null(additional_predictors)) {
-    for (var in additional_predictors) {
-      n_before <- nrow(df_clean)
-      df_clean <- df_clean %>% filter(!is.na(.data[[var]]))
-      n_after <- nrow(df_clean)
-      if (verbose && n_before != n_after) {
-        cat(paste("Removed", n_before - n_after, "rows due to missing", var, "\n"))
+    # Use actual variable names (not interaction terms) for missing data check
+    for (var in actual_predictor_vars) {
+      if (var != treatment_var) {  # Don't double-check treatment var
+        n_before <- nrow(df_clean)
+        df_clean <- df_clean %>% filter(!is.na(.data[[var]]))
+        n_after <- nrow(df_clean)
+        if (verbose && n_before != n_after) {
+          cat(paste("Removed", n_before - n_after, "rows due to missing", var, "\n"))
+        }
       }
     }
   }
