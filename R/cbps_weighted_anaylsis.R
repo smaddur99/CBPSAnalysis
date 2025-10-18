@@ -116,6 +116,9 @@ cbps_weighted_analysis <- function(
 
   if (verbose) cat("Starting CBPS weighted analysis...\n")
 
+  # ADD THIS DEBUG LINE:
+  if (verbose) cat("DEBUG: Function version check - interaction handling enabled\n")
+
   # 1. DATA PREPARATION AND CLEANING
   if (verbose) cat("Step 1: Preparing and cleaning data...\n")
 
