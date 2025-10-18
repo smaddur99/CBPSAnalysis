@@ -142,12 +142,24 @@ cbps_weighted_analysis <- function(
     actual_predictor_vars <- character(0)
   }
 
+  # ADD THESE DEBUG LINES:
+  if (verbose) {
+    cat("DEBUG: additional_predictors =", paste(additional_predictors, collapse = ", "), "\n")
+    cat("DEBUG: actual_predictor_vars =", paste(actual_predictor_vars, collapse = ", "), "\n")
+  }
+
   # Build variable selection list using extracted variables
   all_vars <- c(outcome_var, treatment_var, actual_predictor_vars,
                 imputation_vars, imputation_predictors, propensity_covariates)
 
+  # ADD THIS DEBUG LINE:
+  if (verbose) cat("DEBUG: all_vars =", paste(all_vars, collapse = ", "), "\n")
+
   # Remove duplicates and empty strings
   all_vars <- unique(all_vars[all_vars != ""])
+
+  # ADD THIS DEBUG LINE:
+  if (verbose) cat("DEBUG: all_vars after unique =", paste(all_vars, collapse = ", "), "\n")
 
   # Select and clean data
   df_clean <- data %>%
