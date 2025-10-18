@@ -1,6 +1,6 @@
 Package: CBPSAnalysis
 Title: CBPS Weighted Analysis and Model Comparison Tools
-Version: 0.3.0
+Version: 0.4.0
 Authors@R: 
     person("Madigan", "Durham", , "sd6369@gmail.com", role = c("aut", "cre"))
 Description: A comprehensive toolkit for Covariate Balancing Propensity Score (CBPS) 

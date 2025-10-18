@@ -363,7 +363,7 @@ cbps_weighted_analysis <- function(
   if (verbose) cat("Step 3: Combining imputed and original data...\n")
 
   outcome_treatment_data <- df_clean %>%
-    dplyr::select(all_of(c(outcome_var, treatment_var, additional_predictors)))
+    dplyr::select(all_of(c(outcome_var, treatment_var, actual_predictor_vars)))
 
   df_final <- bind_cols(outcome_treatment_data, df_imp_final)
 
