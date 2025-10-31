@@ -122,6 +122,11 @@ check_treatment_significance <- function(
       }
 
       # Extract model fit statistics (AIC, BIC, BICc)
+      # Initialize variables first (important for scope!)
+      model_aic <- NA_real_
+      model_bic <- NA_real_
+      model_bicc <- NA_real_
+
       tryCatch({
         model_aic <- AIC(model_result$model)
         model_bic <- BIC(model_result$model)
@@ -131,19 +136,16 @@ check_treatment_significance <- function(
         k_params <- length(coef(model_result$model))
 
         # BICc uses AICc formula: AIC + (2*k*(k+1))/(n-k-1)
-        model_aicc <- model_aic + (2 * k_params * (k_params + 1)) / (n_obs - k_params - 1)
+        model_bicc <- model_aic + (2 * k_params * (k_params + 1)) / (n_obs - k_params - 1)
 
         if (verbose) {
           cat("  Model fit statistics: AIC =", round(model_aic, 2),
               ", BIC =", round(model_bic, 2),
-              ", BICc =", round(model_aicc, 2), "\n")
+              ", BICc =", round(model_bicc, 2), "\n")
         }
 
       }, error = function(e) {
-        model_aic <- NA_real_
-        model_bic <- NA_real_
-        model_aicc <- NA_real_
-        if (verbose) cat("  Warning: Could not calculate AIC/BIC for", model_name, "\n")
+        if (verbose) cat("  Warning: Could not calculate AIC/BIC for", model_name, ":", e$message, "\n")
       })
 
       # Get bootstrap results
