@@ -57,6 +57,7 @@ different model specifications. It provides:
 \item Significance testing at multiple alpha levels
 \item Bootstrap confidence interval assessment
 \item Balance quality metrics for each model
+\item Model fit statistics (AIC, BIC, BICc)
 \item Publication-ready summaries
 }
 

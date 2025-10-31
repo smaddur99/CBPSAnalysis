@@ -30,6 +30,7 @@
 #'   \item Significance testing at multiple alpha levels
 #'   \item Bootstrap confidence interval assessment
 #'   \item Balance quality metrics for each model
+#'   \item Model fit statistics (AIC, BIC, BICc)
 #'   \item Publication-ready summaries
 #' }
 #'
@@ -120,6 +121,31 @@ check_treatment_significance <- function(
         if (verbose) cat("  Warning: No confidence intervals available for", model_name, "\n")
       }
 
+      # Extract model fit statistics (AIC, BIC, BICc)
+      tryCatch({
+        model_aic <- AIC(model_result$model)
+        model_bic <- BIC(model_result$model)
+
+        # Calculate BICc (corrected BIC for small samples)
+        n_obs <- nobs(model_result$model)
+        k_params <- length(coef(model_result$model))
+
+        # BICc uses AICc formula: AIC + (2*k*(k+1))/(n-k-1)
+        model_aicc <- model_aic + (2 * k_params * (k_params + 1)) / (n_obs - k_params - 1)
+
+        if (verbose) {
+          cat("  Model fit statistics: AIC =", round(model_aic, 2),
+              ", BIC =", round(model_bic, 2),
+              ", BICc =", round(model_aicc, 2), "\n")
+        }
+
+      }, error = function(e) {
+        model_aic <- NA_real_
+        model_bic <- NA_real_
+        model_aicc <- NA_real_
+        if (verbose) cat("  Warning: Could not calculate AIC/BIC for", model_name, "\n")
+      })
+
       # Get bootstrap results
       bootstrap_summary <- model_result$bootstrap_summary
 
@@ -148,7 +174,10 @@ check_treatment_significance <- function(
         dplyr::mutate(
           model_name = model_name,
           sample_size = model_result$sample_sizes$final,
-          analysis_type = "Combined"
+          analysis_type = "Combined",
+          AIC = model_aic,
+          BIC = model_bic,
+          BICc = model_aicc
         )
 
       # Filter out intercept if requested
@@ -258,6 +287,10 @@ check_treatment_significance <- function(
       primary_treatment_significant = any(glm_p_value < 0.05, na.rm = TRUE),
       primary_treatment_p_value = min(glm_p_value, na.rm = TRUE),
       primary_treatment_estimate = first(glm_estimate),
+      # Add model fit statistics
+      AIC = first(AIC),
+      BIC = first(BIC),
+      BICc = first(BICc),
       .groups = "drop"
     )
 
@@ -309,6 +342,11 @@ check_treatment_significance <- function(
   existing_balance <- balance_columns[balance_columns %in% names(sig_details)]
   base_columns <- c(base_columns, existing_balance)
 
+  # Add model fit statistics if they exist
+  fit_columns <- c("AIC", "BIC", "BICc")
+  existing_fit <- fit_columns[fit_columns %in% names(sig_details)]
+  base_columns <- c(base_columns, existing_fit)
+
   # Add bootstrap significance if it exists and requested
   if(include_bootstrap && "bootstrap_significant" %in% names(sig_details)) {
     base_columns <- c(base_columns, "bootstrap_significant")
@@ -343,6 +381,22 @@ check_treatment_significance <- function(
     significant_count <- sum(treatment_summary$primary_treatment_significant)
     cat("\nTotal models with significant treatment effect:", significant_count,
         "out of", nrow(treatment_summary), "\n")
+
+    # Model fit comparison if available
+    if ("AIC" %in% names(summary_table) && any(!is.na(summary_table$AIC))) {
+      cat("\nModel Fit Statistics:\n")
+      fit_summary <- summary_table %>%
+        dplyr::select(model_name, AIC, BIC, BICc) %>%
+        dplyr::arrange(AIC)
+
+      for (i in 1:nrow(fit_summary)) {
+        cat("  ", fit_summary$model_name[i], ": AIC =", round(fit_summary$AIC[i], 2),
+            ", BIC =", round(fit_summary$BIC[i], 2),
+            ", BICc =", round(fit_summary$BICc[i], 2), "\n")
+      }
+
+      cat("\n  Best fitting model (lowest AIC):", fit_summary$model_name[1], "\n")
+    }
 
     # Balance assessment summary if available
     if ("max_std_diff" %in% names(combined_results) && any(!is.na(combined_results$max_std_diff))) {
@@ -444,7 +498,7 @@ quick_sig_check <- function(model_results_list, model_names = NULL, alpha = 0.05
 
     if (nrow(sig_models) > 0) {
       cat("Models with significant", primary_treatment, "effects (p <", alpha, "):\n")
-      print(sig_models %>% dplyr::select(model_name, primary_treatment_p_value, primary_treatment_estimate, sample_size))
+      print(sig_models %>% dplyr::select(model_name, primary_treatment_p_value, primary_treatment_estimate, sample_size, AIC, BIC, BICc))
     } else {
       cat("No models with significant", primary_treatment, "effects at p <", alpha, "\n")
     }
@@ -452,7 +506,7 @@ quick_sig_check <- function(model_results_list, model_names = NULL, alpha = 0.05
     # Show all treatment results
     all_models <- results$summary_table
     cat("Primary treatment results for all models:\n")
-    print(all_models %>% dplyr::select(model_name, primary_treatment_p_value, primary_treatment_estimate, sample_size))
+    print(all_models %>% dplyr::select(model_name, primary_treatment_p_value, primary_treatment_estimate, sample_size, AIC, BIC, BICc))
   }
 
   return(results$summary_table)

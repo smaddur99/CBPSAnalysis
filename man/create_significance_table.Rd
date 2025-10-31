@@ -11,6 +11,7 @@ create_significance_table(
   treatment_label = NULL,
   model_labels = NULL,
   include_bootstrap = TRUE,
+  include_fit_stats = TRUE,
   decimal_places = 3,
   font_size = 16,
   font_family = "Times New Roman",
@@ -31,6 +32,8 @@ create_significance_table(
 \item{model_labels}{Named character vector. Pretty names for models (default: NULL)}
 
 \item{include_bootstrap}{Logical. Whether to include bootstrap results (default: TRUE)}
+
+\item{include_fit_stats}{Logical. Whether to include model fit statistics (AIC/BIC/BICc) (default: TRUE)}
 
 \item{decimal_places}{Integer. Number of decimal places for estimates (default: 3)}
 
@@ -58,6 +61,7 @@ This function creates publication-ready tables using the gt package with:
 \item Significance highlighting (light blue background for significant results)
 \item Confidence intervals for both GLM and bootstrap estimates
 \item Balance assessment ratios
+\item Model fit statistics (AIC, BIC, BICc)
 \item Sample size information
 \item Customizable styling options
 }

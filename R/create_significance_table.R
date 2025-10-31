@@ -9,6 +9,7 @@
 #' @param treatment_label Character. Label for the treatment variable (default: NULL, uses variable name)
 #' @param model_labels Named character vector. Pretty names for models (default: NULL)
 #' @param include_bootstrap Logical. Whether to include bootstrap results (default: TRUE)
+#' @param include_fit_stats Logical. Whether to include model fit statistics (AIC/BIC/BICc) (default: TRUE)
 #' @param decimal_places Integer. Number of decimal places for estimates (default: 3)
 #' @param font_size Integer. Font size for the table (default: 16)
 #' @param font_family Character. Font family for the table (default: "Times New Roman")
@@ -25,6 +26,7 @@
 #'   \item Significance highlighting (light blue background for significant results)
 #'   \item Confidence intervals for both GLM and bootstrap estimates
 #'   \item Balance assessment ratios
+#'   \item Model fit statistics (AIC, BIC, BICc)
 #'   \item Sample size information
 #'   \item Customizable styling options
 #' }
@@ -69,6 +71,7 @@ create_significance_table <- function(
     treatment_label = NULL,
     model_labels = NULL,
     include_bootstrap = TRUE,
+    include_fit_stats = TRUE,
     decimal_places = 3,
     font_size = 16,
     font_family = "Times New Roman",
@@ -186,19 +189,27 @@ create_significance_table <- function(
 
   # Select and rename columns for the table
   if (include_bootstrap && "bootstrap_estimate" %in% names(formatted_data) && !all(is.na(formatted_data$bootstrap_estimate))) {
+    # Create base selection with bootstrap
+    base_select <- c(
+      "row_id",
+      "pretty_model",
+      "glm_estimate",
+      "bootstrap_estimate",
+      "glm_conf_int",
+      "bootstrap_conf_int",
+      "p_value_formatted",
+      "balance_ratio",
+      "sample_size_col",
+      "is_significant"
+    )
+
+    # Add fit stats if requested and available
+    if (include_fit_stats && all(c("AIC", "BIC", "BICc") %in% names(formatted_data))) {
+      base_select <- c(base_select, "AIC", "BIC", "BICc")
+    }
+
     table_final <- formatted_data %>%
-      dplyr::select(
-        row_id,
-        pretty_model,
-        glm_estimate,
-        bootstrap_estimate,
-        glm_conf_int,
-        bootstrap_conf_int,
-        p_value_formatted,
-        balance_ratio,
-        sample_size_col,
-        is_significant
-      )
+      dplyr::select(dplyr::all_of(base_select))
 
     col_labels <- list(
       pretty_model = "Model",
@@ -210,18 +221,33 @@ create_significance_table <- function(
       balance_ratio = "Covariates Balanced",
       sample_size_col = "N"
     )
+
+    if (include_fit_stats && "AIC" %in% names(table_final)) {
+      col_labels$AIC <- "AIC"
+      col_labels$BIC <- "BIC"
+      col_labels$BICc <- "BICc"
+    }
+
   } else {
+    # Create base selection without bootstrap
+    base_select <- c(
+      "row_id",
+      "pretty_model",
+      "glm_estimate",
+      "glm_conf_int",
+      "p_value_formatted",
+      "balance_ratio",
+      "sample_size_col",
+      "is_significant"
+    )
+
+    # Add fit stats if requested and available
+    if (include_fit_stats && all(c("AIC", "BIC", "BICc") %in% names(formatted_data))) {
+      base_select <- c(base_select, "AIC", "BIC", "BICc")
+    }
+
     table_final <- formatted_data %>%
-      dplyr::select(
-        row_id,
-        pretty_model,
-        glm_estimate,
-        glm_conf_int,
-        p_value_formatted,
-        balance_ratio,
-        sample_size_col,
-        is_significant
-      )
+      dplyr::select(dplyr::all_of(base_select))
 
     col_labels <- list(
       pretty_model = "Model",
@@ -231,6 +257,12 @@ create_significance_table <- function(
       balance_ratio = "Covariates Balanced",
       sample_size_col = "N"
     )
+
+    if (include_fit_stats && "AIC" %in% names(table_final)) {
+      col_labels$AIC <- "AIC"
+      col_labels$BIC <- "BIC"
+      col_labels$BICc <- "BICc"
+    }
   }
 
   # Create the GT table with conditional subtitle
@@ -251,13 +283,28 @@ create_significance_table <- function(
       )
   }
 
+  # Format numeric columns
+  numeric_cols <- c("glm_estimate")
+  if("bootstrap_estimate" %in% names(table_final)) {
+    numeric_cols <- c(numeric_cols, "bootstrap_estimate")
+  }
+
   gt_table <- gt_table %>%
     gt::fmt_number(
-      columns = c("glm_estimate",
-                  if("bootstrap_estimate" %in% names(table_final)) "bootstrap_estimate" else NULL),
+      columns = dplyr::all_of(numeric_cols),
       decimals = decimal_places
-    ) %>%
+    )
 
+  # Format fit statistics with 1 decimal place if present
+  if (include_fit_stats && all(c("AIC", "BIC", "BICc") %in% names(table_final))) {
+    gt_table <- gt_table %>%
+      gt::fmt_number(
+        columns = c("AIC", "BIC", "BICc"),
+        decimals = 1
+      )
+  }
+
+  gt_table <- gt_table %>%
     # Style the model names
     gt::tab_style(
       style = gt::cell_text(weight = "bold"),
@@ -300,8 +347,15 @@ create_significance_table <- function(
     # Alignment
     gt::cols_align(align = "left", columns = "pretty_model") %>%
     gt::cols_align(align = "center", columns = c("sample_size_col", "balance_ratio", "p_value_formatted")) %>%
-    gt::cols_align(align = "right", columns = contains("estimate")) %>%
+    gt::cols_align(align = "right", columns = contains("estimate"))
 
+  # Align fit statistics to center if present
+  if (include_fit_stats && "AIC" %in% names(table_final)) {
+    gt_table <- gt_table %>%
+      gt::cols_align(align = "center", columns = c("AIC", "BIC", "BICc"))
+  }
+
+  gt_table <- gt_table %>%
     # Hide utility columns
     gt::cols_hide(columns = c("row_id", "is_significant"))
 
@@ -320,6 +374,11 @@ create_significance_table <- function(
   cat("  Total models:", total_count, "\n")
   cat("  Significant models (p <", alpha_threshold, "):", sig_count, "\n")
   cat("  Treatment variable:", treatment_label, "\n")
+
+  if (include_fit_stats && "AIC" %in% names(table_final)) {
+    best_aic <- table_final %>% dplyr::slice_min(AIC, n = 1)
+    cat("  Best fitting model (lowest AIC):", best_aic$pretty_model[1], "\n")
+  }
 
   return(gt_table)
 }
