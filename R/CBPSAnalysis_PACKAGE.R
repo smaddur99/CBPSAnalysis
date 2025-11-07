@@ -13,6 +13,7 @@
 #'   \item \code{\link{create_significance_table}}: Create publication tables with covariate balance column
 #'   \item \code{\link{create_f_sig_table}}: Create publication tables without covariate balance column
 #'   \item \code{\link{create_balance_table}}: Create publication tables for only covariate balance
+#'    \item \code{\link{quick_coef_table}}: Create quick coeficent table
 #' }
 #'
 #' @keywords internal

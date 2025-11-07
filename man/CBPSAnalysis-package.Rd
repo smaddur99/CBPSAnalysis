@@ -14,6 +14,7 @@ bootstrapping, and publication-ready result tables.
 
 \itemize{
 \item \code{\link{cbps_weighted_analysis}}: Main CBPS analysis function
+\item \code{\link{npcbps_weighted_analysis}}: Nonparametric CBPS analysis function
 \item \code{\link{extract_cbps_results}}: Extract and structure results
 \item \code{\link{check_treatment_significance}}: Compare treatment effects across models
 \item \code{\link{create_significance_table}}: Create publication tables with covariate balance column
