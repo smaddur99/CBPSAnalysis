@@ -1,6 +1,6 @@
-#' CBPS Propensity Score Weighted GLM Analysis
+#' Nonparametric CBPS Propensity Score Weighted GLM Analysis
 #'
-#' Performs comprehensive Covariate Balancing Propensity Score (CBPS) weighted analysis
+#' Performs comprehensive Nonparametric Covariate Balancing Propensity Score (NPCBPS) weighted analysis
 #' with multiple imputation, balance assessment, and bootstrap confidence intervals.
 #'
 #' @param data A data frame containing the analysis variables
@@ -14,7 +14,6 @@
 #' @param mice_method Character. MICE imputation method (default: "pmm" for Predictive Mean Matching)
 #' @param mice_seed Integer. Random seed for MICE imputation (default: 500)
 #' @param cbps_estimand Character. CBPS estimand: "ATE" (Average Treatment Effect) or "ATT" (Average Treatment on Treated) (default: "ATE")
-#' @param cbps_stop_method Character. Balance criteria for tuning (default: "es.mean")
 #' @param bootstrap_n Integer. Number of bootstrap samples (default: 1000)
 #' @param bootstrap_seed Integer. Random seed for bootstrap (default: 20250417)
 #' @param balance_threshold_m Numeric. Balance threshold for mean differences (default: 0.1)
@@ -25,7 +24,7 @@
 #' \itemize{
 #'   \item \code{data}: Final analysis dataset with weights
 #'   \item \code{model}: Fitted weighted GLM model
-#'   \item \code{weights}: CBPS weight object from WeightIt
+#'   \item \code{weights}: NPCBPS weight object from WeightIt
 #'   \item \code{balance}: Balance assessment from cobalt
 #'   \item \code{bootstrap_summary}: Bootstrap confidence intervals
 #'   \item \code{bootstrap_results}: Full bootstrap results matrix
@@ -33,15 +32,19 @@
 #' }
 #'
 #' @details
-#' This function implements a comprehensive workflow for CBPS analysis including:
+#' This function implements a comprehensive workflow for Nonparametric CBPS analysis including:
 #' \enumerate{
 #'   \item Data cleaning and missing data assessment
 #'   \item Multiple imputation using MICE with MCAR testing
-#'   \item CBPS propensity score estimation
+#'   \item Nonparametric CBPS propensity score estimation (kernel-based)
 #'   \item Covariate balance assessment
 #'   \item Weighted GLM fitting
 #'   \item Bootstrap confidence intervals
 #' }
+#'
+#' The nonparametric CBPS method uses kernel-based estimation and does not assume
+#' a parametric form for the propensity score model. This can be more flexible than
+#' parametric CBPS but may require larger sample sizes.
 #'
 #' The function tests for Missing Completely At Random (MCAR) assumptions and provides
 #' warnings about potential Missing At Random (MAR) or Missing Not At Random (MNAR) scenarios.
@@ -52,13 +55,14 @@
 #' Austin, P. C. (2009). Balance diagnostics for comparing the distribution of baseline
 #' covariates between treatment groups in propensity-score matched samples. Statistics in Medicine, 28(25), 3083-107.
 #'
-#' Li, Y., & Li, L. (2021). Propensity score analysis methods with balancing constraints:
-#' A Monte Carlo study. Statistical Methods in Medical Research, 30(4), 1119-1142.
+#' Fong, C., Hazlett, C., & Imai, K. (2018). Covariate balancing propensity score for a
+#' continuous treatment: Application to the efficacy of political advertisements.
+#' The Annals of Applied Statistics, 12(1), 156-177.
 #'
 #' @examples
 #' \dontrun{
 #' # Basic usage
-#' results <- cbps_weighted_analysis(
+#' results <- npcbps_weighted_analysis(
 #'   data = my_data,
 #'   outcome_var = "weight_percentile",
 #'   treatment_var = "treatment_group",
@@ -68,7 +72,7 @@
 #' )
 #'
 #' # With interaction terms
-#' results <- cbps_weighted_analysis(
+#' results <- npcbps_weighted_analysis(
 #'   data = my_data,
 #'   outcome_var = "outcome",
 #'   treatment_var = "treatment",
@@ -91,7 +95,7 @@
 #' @importFrom cobalt bal.tab
 #' @importFrom tibble tibble
 #' @importFrom stats glm as.formula coef quantile sd
-cbps_weighted_analysis <- function(
+npcbps_weighted_analysis <- function(
     data,
     outcome_var,
     treatment_var,
@@ -103,7 +107,6 @@ cbps_weighted_analysis <- function(
     mice_method = "pmm",
     mice_seed = 500,
     cbps_estimand = "ATE",
-    cbps_stop_method = "es.mean",
     bootstrap_n = 1000,
     bootstrap_seed = 20250417,
     balance_threshold_m = 0.1,
@@ -124,8 +127,8 @@ cbps_weighted_analysis <- function(
     propensity_covariates <- character(0)
   }
 
-  if (verbose) cat("Starting CBPS weighted analysis...\n")
-  if (verbose) cat("DEBUG: Function version - FIXED interaction handling\n")
+  if (verbose) cat("Starting Nonparametric CBPS weighted analysis...\n")
+  if (verbose) cat("DEBUG: Using kernel-based nonparametric CBPS estimation\n")
 
   # 1. DATA PREPARATION AND CLEANING
   if (verbose) cat("Step 1: Preparing and cleaning data...\n")
@@ -413,21 +416,23 @@ cbps_weighted_analysis <- function(
     if (verbose) cat(paste("Sample size after removing missing covariates:", nrow(df_final), "\n"))
   }
 
-  # 5. PROPENSITY SCORE WEIGHTING
-  if (verbose) cat("Step 5: Computing CBPS propensity scores...\n")
+  # 5. PROPENSITY SCORE WEIGHTING - NONPARAMETRIC CBPS
+  if (verbose) cat("Step 5: Computing Nonparametric CBPS propensity scores...\n")
+  if (verbose) cat("  Note: NPCBPS uses kernel-based estimation - may take longer than parametric CBPS\n")
 
-  cbps_weights <- WeightIt::weightit(
+  # CRITICAL CHANGE: Use method = "npcbps" instead of "cbps"
+  npcbps_weights <- WeightIt::weightit(
     ps_formula,
     data = df_final,
-    method = "cbps",
-    estimand = cbps_estimand,
-    stop.method = cbps_stop_method
+    method = "npcbps",
+    estimand = cbps_estimand
+    # Note: stop.method is not used for npcbps
   )
 
   # 6. BALANCE ASSESSMENT
   if (verbose) cat("Step 6: Assessing covariate balance...\n")
 
-  balance_table <- bal.tab(cbps_weights, treat = treatment_var, method = "weighting",
+  balance_table <- bal.tab(npcbps_weights, treat = treatment_var, method = "weighting",
                            m.threshold = balance_threshold_m, v.threshold = balance_threshold_v)
 
   # Check balance and provide warnings
@@ -460,7 +465,7 @@ cbps_weighted_analysis <- function(
                       "\n  Maximum standardized difference:", round(max_std_diff, 3),
                       "(threshold:", balance_threshold_m, ")",
                       "\n  Variables with poor balance:", paste(unbalanced_vars, collapse = ", "),
-                      "\n  Consider different propensity score method or additional covariates."),
+                      "\n  Consider adding more covariates or checking sample size."),
                 call. = FALSE)
       } else {
         if (verbose) cat("Good covariate balance achieved (all variables < threshold)\n")
@@ -472,8 +477,9 @@ cbps_weighted_analysis <- function(
                       "\n  Maximum standardized difference:", round(max_std_diff, 3),
                       "\n  Results may be unreliable. Consider:",
                       "\n  - Adding more covariates to propensity model",
-                      "\n  - Using different weighting method",
-                      "\n  - Checking for overlap in propensity scores"),
+                      "\n  - Checking if sample size is sufficient for nonparametric methods",
+                      "\n  - Using parametric CBPS instead",
+                      "\n  - Checking for overlap in covariate distributions"),
                 call. = FALSE)
       }
     } else {
@@ -509,9 +515,9 @@ cbps_weighted_analysis <- function(
 
   weighted_model <- glm(outcome_formula,
                         data = df_final,
-                        weights = cbps_weights$weights)
+                        weights = npcbps_weights$weights)
 
-  # CRITICAL FIX: Get the actual coefficient names from the fitted model
+  # Get the actual coefficient names from the fitted model
   # This handles interaction terms correctly (e.g., "var1*var2" becomes "var1:var2")
   model_coef_names <- names(coef(weighted_model))
 
@@ -523,15 +529,15 @@ cbps_weighted_analysis <- function(
     cat("DEBUG: Coefficients for bootstrap:", paste(model_coef_names_no_intercept, collapse = ", "), "\n")
   }
 
-  # 8. BOOTSTRAPPING (Robust version with FIXED coefficient extraction)
+  # 8. BOOTSTRAPPING
   if (verbose) cat("Step 8: Performing bootstrap analysis...\n")
 
   boot_data <- df_final %>%
-    mutate(weight = cbps_weights$weights)
+    mutate(weight = npcbps_weights$weights)
 
   set.seed(bootstrap_seed)
 
-  # Robust bootstrap function with error handling and FIXED coefficient extraction
+  # Robust bootstrap function with error handling
   boot_fun <- function(data, indices) {
     tryCatch({
       d <- data[indices, ]
@@ -550,7 +556,7 @@ cbps_weighted_analysis <- function(
 
       coeffs <- coef(model)
 
-      # CRITICAL FIX: Extract coefficients using the actual model coefficient names
+      # Extract coefficients using the actual model coefficient names
       result <- coeffs[model_coef_names_no_intercept]
 
       # Ensure we return the right length vector
@@ -613,7 +619,7 @@ cbps_weighted_analysis <- function(
   return(list(
     data = df_final,
     model = weighted_model,
-    weights = cbps_weights,
+    weights = npcbps_weights,
     balance = balance_table,
     bootstrap_summary = boot_summary,
     bootstrap_results = boot_matrix,
