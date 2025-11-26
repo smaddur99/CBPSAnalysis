@@ -214,8 +214,7 @@ create_sens_table <- function(sig_results,
   # Create gt table with row groups
   if (include_subtitle) {
     gt_table <- table_final %>%
-      dplyr::group_by(sens_group) %>%
-      gt::gt() %>%
+      gt::gt(groupname_col = "sens_group") %>%  # CHANGED: Use groupname_col parameter
       gt::cols_label(.list = col_labels) %>%
       gt::tab_header(
         title = gt::md(table_title),
@@ -223,8 +222,7 @@ create_sens_table <- function(sig_results,
       )
   } else {
     gt_table <- table_final %>%
-      dplyr::group_by(sens_group) %>%
-      gt::gt() %>%
+      gt::gt(groupname_col = "sens_group") %>%  # CHANGED: Use groupname_col parameter
       gt::cols_label(.list = col_labels) %>%
       gt::tab_header(title = gt::md(table_title))
   }
