@@ -51,6 +51,7 @@
 #' @importFrom dplyr select all_of filter mutate full_join rename
 #' @importFrom tibble tibble as_tibble rownames_to_column
 #' @importFrom broom tidy
+#'
 extract_cbps_results <- function(cbps_results, include_balance_details = TRUE) {
 
   # Load required libraries

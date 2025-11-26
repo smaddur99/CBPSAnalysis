@@ -178,15 +178,17 @@ create_sens_table <- function(sig_results,
     dplyr::arrange(sensitivity_type, glm_p_value) %>%
     dplyr::mutate(row_id = row_number())
 
+  # Select columns - KEEP sens_group in data but DON'T label it
   if (include_bootstrap && "bootstrap_estimate" %in% names(formatted_data) &&
       !all(is.na(formatted_data$bootstrap_estimate))) {
     table_final <- formatted_data %>%
-      dplyr::select(row_id, sens_group, outcome_name, glm_estimate,  # Keep sens_group for grouping
+      dplyr::select(row_id, sens_group, outcome_name, glm_estimate,
                     bootstrap_estimate, glm_conf_int, bootstrap_conf_int,
                     p_value_formatted, sample_size_col, is_significant)
 
+    # CRITICAL: Do NOT include sens_group in col_labels
     col_labels <- list(
-      outcome_name = "Outcome",  # No sens_group label
+      outcome_name = "Outcome",
       glm_estimate = "Estimate",
       bootstrap_estimate = "Bootstrap Est.",
       glm_conf_int = "95% CI",
@@ -196,11 +198,12 @@ create_sens_table <- function(sig_results,
     )
   } else {
     table_final <- formatted_data %>%
-      dplyr::select(row_id, sens_group, outcome_name, glm_estimate,  # Keep sens_group for grouping
+      dplyr::select(row_id, sens_group, outcome_name, glm_estimate,
                     glm_conf_int, p_value_formatted, sample_size_col, is_significant)
 
+    # CRITICAL: Do NOT include sens_group in col_labels
     col_labels <- list(
-      outcome_name = "Outcome",  # No sens_group label
+      outcome_name = "Outcome",
       glm_estimate = "Estimate",
       glm_conf_int = "95% CI",
       p_value_formatted = "P-Value",
@@ -260,10 +263,10 @@ create_sens_table <- function(sig_results,
       row_group.padding = gt::px(8),
       heading.padding = gt::px(8)
     ) %>%
-    gt::cols_align(align = "left", columns = c("sens_group", "outcome_name")) %>%
+    gt::cols_align(align = "left", columns = "outcome_name") %>%
     gt::cols_align(align = "center", columns = c("sample_size_col", "p_value_formatted")) %>%
     gt::cols_align(align = "right", columns = contains("estimate")) %>%
-    gt::cols_hide(columns = c("row_id", "is_significant"))
+    gt::cols_hide(columns = c("row_id", "is_significant"))  # Hide helper columns but NOT sens_group
 
   # Save if filename provided
   if (!is.null(filename)) {
