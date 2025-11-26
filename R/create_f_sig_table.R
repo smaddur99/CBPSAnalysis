@@ -189,7 +189,7 @@ create_f_sig_table <- function(
       )
 
     col_labels <- list(
-      pretty_model = "Model",
+      pretty_model = "Outcome",
       glm_estimate = "Estimate",
       bootstrap_estimate = "Bootstrap Est.",
       glm_conf_int = "95% CI",
