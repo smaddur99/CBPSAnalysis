@@ -178,21 +178,32 @@ create_sens_table <- function(sig_results,
     dplyr::arrange(sensitivity_type, glm_p_value) %>%
     dplyr::mutate(row_id = row_number())
 
-  # Select columns based on bootstrap inclusion
+  # Select columns - REMOVE sens_group from select() and col_labels
   if (include_bootstrap && "bootstrap_estimate" %in% names(formatted_data) &&
       !all(is.na(formatted_data$bootstrap_estimate))) {
     table_final <- formatted_data %>%
-      dplyr::select(row_id, sens_group, outcome_name, glm_estimate,
+      dplyr::select(row_id, sens_group, outcome_name, glm_estimate,  # Keep sens_group for grouping
                     bootstrap_estimate, glm_conf_int, bootstrap_conf_int,
                     p_value_formatted, sample_size_col, is_significant)
 
     col_labels <- list(
-      sens_group = "Sensitivity Analysis",
-      outcome_name = "Outcome",
+      outcome_name = "Outcome",  # No sens_group label
       glm_estimate = "Estimate",
       bootstrap_estimate = "Bootstrap Est.",
       glm_conf_int = "95% CI",
       bootstrap_conf_int = "Bootstrap 95% CI",
+      p_value_formatted = "P-Value",
+      sample_size_col = "N"
+    )
+  } else {
+    table_final <- formatted_data %>%
+      dplyr::select(row_id, sens_group, outcome_name, glm_estimate,  # Keep sens_group for grouping
+                    glm_conf_int, p_value_formatted, sample_size_col, is_significant)
+
+    col_labels <- list(
+      outcome_name = "Outcome",  # No sens_group label
+      glm_estimate = "Estimate",
+      glm_conf_int = "95% CI",
       p_value_formatted = "P-Value",
       sample_size_col = "N"
     )
