@@ -17,7 +17,8 @@ create_balance_table(
   shade_alternating = TRUE,
   smd_threshold = 0.1,
   vr_lower = 0.5,
-  vr_upper = 2
+  vr_upper = 2,
+  show_model_column = NULL
 )
 }
 \arguments{
