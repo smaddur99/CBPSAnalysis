@@ -70,7 +70,10 @@ create_balance_table <- function(
     decimal_places = 3,
     font_size = 16,
     font_family = "Times New Roman",
-    shade_alternating = TRUE
+    shade_alternating = TRUE,
+    smd_threshold = 0.1,      # NEW: SMD threshold for balance
+    vr_lower = 0.5,           # NEW: Lower VR threshold
+    vr_upper = 2.0            # NEW: Upper VR threshold
 ) {
 
   # Check required packages
@@ -186,6 +189,21 @@ create_balance_table <- function(
       dplyr::mutate(pretty_variable = .data$variable)
   }
 
+  # STEP 3.5: NEW - Flag poor balance and add asterisk
+  balance_data <- balance_data %>%
+    dplyr::mutate(
+      poor_balance = (.data$mean_balance > smd_threshold) |
+        (.data$variance_balance < vr_lower) |
+        (.data$variance_balance > vr_upper),
+      # Add asterisk to variable name if poorly balanced
+      pretty_variable = ifelse(.data$poor_balance,
+                               paste0(.data$pretty_variable, "*"),
+                               .data$pretty_variable)
+    )
+
+  # Count number of poorly balanced covariates
+  n_poor_balance <- sum(balance_data$poor_balance, na.rm = TRUE)
+
   # STEP 4: Format the data for table
   table_data <- balance_data %>%
     dplyr::mutate(
@@ -201,7 +219,7 @@ create_balance_table <- function(
       row_id = dplyr::row_number()
     ) %>%
     dplyr::select(.data$row_id, .data$model_display, .data$pretty_variable,
-                  .data$mean_balance, .data$variance_balance, .data$shade_flag)
+                  .data$mean_balance, .data$variance_balance, .data$shade_flag, .data$poor_balance)
 
   # STEP 5: Create the gt table
   gt_table <- table_data %>%
@@ -273,7 +291,15 @@ create_balance_table <- function(
     gt::cols_align(align = "center", columns = c("mean_balance", "variance_balance")) %>%
 
     # Hide utility columns
-    gt::cols_hide(columns = c("row_id", "shade_flag"))
+    gt::cols_hide(columns = c("row_id", "shade_flag", "poor_balance")) %>%
+
+    # NEW: Add source note explaining asterisk
+    gt::tab_source_note(
+      source_note = gt::md(paste0(
+        "*Indicates poor balance (SMD > ", smd_threshold,
+        " or VR < ", vr_lower, " or VR > ", vr_upper, ")"
+      ))
+    )
 
   # Save if filename provided
   if (!is.null(filename)) {
@@ -288,6 +314,7 @@ create_balance_table <- function(
   cat("\nBalance Table Summary:\n")
   cat("  Number of models:", n_models, "\n")
   cat("  Total covariate rows:", n_total, "\n")
+  cat("  Poorly balanced covariates:", n_poor_balance, "\n")
 
   return(gt_table)
 }
