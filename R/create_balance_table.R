@@ -74,7 +74,7 @@ create_balance_table <- function(
     smd_threshold = 0.1,
     vr_lower = 0.5,
     vr_upper = 2.0,
-    show_model_column = TRUE  # NEW: Option to show/hide model column
+    show_model_column = NULL  # Changed to NULL default - auto-detect
 ) {
 
   # Check required packages
@@ -159,9 +159,8 @@ create_balance_table <- function(
     stop("balance_results must be a data frame or list output from extract_cbps_results()")
   }
 
-  # NEW: Check if we should hide model column
+  # Check number of models
   n_models <- length(unique(balance_data$model))
-  hide_model_column <- (n_models == 1 && is.null(model_labels) && show_model_column == TRUE)
 
   # STEP 2: Apply pretty labels for models
   if (!is.null(model_labels)) {
@@ -171,6 +170,16 @@ create_balance_table <- function(
                        model_labels[.data$model],
                        .data$model)
       )
+  }
+
+  # FIXED: Determine if model column should be hidden
+  # Logic: Hide if (1) only one model AND (2) no custom model labels provided AND (3) show_model_column not explicitly set to TRUE
+  if (is.null(show_model_column)) {
+    # Auto-detect: hide if single model with no custom labels
+    hide_model_column <- (n_models == 1 && is.null(model_labels))
+  } else {
+    # User explicitly set preference
+    hide_model_column <- !show_model_column
   }
 
   # STEP 3: Apply pretty labels for variables
@@ -295,7 +304,7 @@ create_balance_table <- function(
     gt::cols_align(align = "left", columns = c("pretty_variable", "model_display")) %>%
     gt::cols_align(align = "center", columns = c("mean_balance", "variance_balance"))
 
-  # NEW: Hide model column if single model and no custom labels
+  # Hide utility columns and optionally model column
   columns_to_hide <- c("row_id", "shade_flag", "poor_balance")
   if (hide_model_column) {
     columns_to_hide <- c(columns_to_hide, "model_display")
