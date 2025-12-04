@@ -74,7 +74,7 @@ create_balance_table <- function(
     smd_threshold = 0.1,
     vr_lower = 0.5,
     vr_upper = 2.0,
-    show_model_column = NULL  # Changed to NULL default - auto-detect
+    show_model_column = NULL
 ) {
 
   # Check required packages
@@ -88,43 +88,34 @@ create_balance_table <- function(
 
   # STEP 1: Extract and prepare balance data
   if (is.data.frame(balance_results)) {
-    # Direct data frame input
     balance_data <- balance_results
 
-    # Ensure required columns exist
     if (!"variable" %in% names(balance_data)) {
       stop("Input data frame must contain 'variable' column")
     }
 
-    # Check for balance columns (various possible names)
     if ("diff_adj" %in% names(balance_data)) {
       balance_data <- balance_data %>%
         dplyr::mutate(mean_balance = abs(.data$diff_adj))
     } else if ("mean_balance" %in% names(balance_data)) {
-      # Already has mean_balance, keep it
       balance_data <- balance_data
     } else {
       stop("Input data frame must contain 'diff_adj' or 'mean_balance' column")
     }
 
-    # Check for variance ratio
     if ("var_ratio_adj" %in% names(balance_data)) {
       balance_data <- balance_data %>%
         dplyr::mutate(variance_balance = .data$var_ratio_adj)
     } else if (!"variance_balance" %in% names(balance_data)) {
-      # If no variance ratio exists, create NA column
       balance_data$variance_balance <- NA
     }
 
-    # Add model column if not present
     if (!"model" %in% names(balance_data)) {
       balance_data$model <- "Model"
     }
 
   } else if (is.list(balance_results)) {
-    # Check if it's a single extract_cbps_results output
     if ("balance" %in% names(balance_results) && "estimates" %in% names(balance_results)) {
-      # Single model from extract_cbps_results
       balance_data <- balance_results$balance %>%
         dplyr::mutate(
           model = "Model",
@@ -132,7 +123,6 @@ create_balance_table <- function(
           variance_balance = if("var_ratio_adj" %in% names(.)) .data$var_ratio_adj else NA
         )
     } else {
-      # Multiple models - named list of extract_cbps_results outputs
       balance_list <- list()
 
       for (model_name in names(balance_results)) {
@@ -159,6 +149,9 @@ create_balance_table <- function(
     stop("balance_results must be a data frame or list output from extract_cbps_results()")
   }
 
+  # NEW: Check if variance_balance is all NA
+  has_variance_data <- !all(is.na(balance_data$variance_balance))
+
   # Check number of models
   n_models <- length(unique(balance_data$model))
 
@@ -172,24 +165,19 @@ create_balance_table <- function(
       )
   }
 
-  # FIXED: Determine if model column should be hidden
-  # Logic: Hide if (1) only one model AND (2) no custom model labels provided AND (3) show_model_column not explicitly set to TRUE
+  # Determine if model column should be hidden
   if (is.null(show_model_column)) {
-    # Auto-detect: hide if single model with no custom labels
     hide_model_column <- (n_models == 1 && is.null(model_labels))
   } else {
-    # User explicitly set preference
     hide_model_column <- !show_model_column
   }
 
   # STEP 3: Apply pretty labels for variables
   if (!is.null(variable_labels)) {
     if (is.function(variable_labels)) {
-      # Apply function to create pretty labels
       balance_data <- balance_data %>%
         dplyr::mutate(pretty_variable = variable_labels(.data$variable))
     } else if (is.character(variable_labels)) {
-      # Use named vector for mapping
       balance_data <- balance_data %>%
         dplyr::mutate(
           pretty_variable = ifelse(.data$variable %in% names(variable_labels),
@@ -198,26 +186,35 @@ create_balance_table <- function(
         )
     }
   } else {
-    # No labels provided - use variable names as-is
     balance_data <- balance_data %>%
       dplyr::mutate(pretty_variable = .data$variable)
   }
 
-  # STEP 3.5: Flag poor balance and add asterisk
+  # STEP 3.5: Flag poor balance and add asterisk - FIXED VERSION
+  if (has_variance_data) {
+    # Evaluate both SMD and VR
+    balance_data <- balance_data %>%
+      dplyr::mutate(
+        poor_balance = (.data$mean_balance > smd_threshold) |
+          ((!is.na(.data$variance_balance)) &
+             ((.data$variance_balance < vr_lower) |
+                (.data$variance_balance > vr_upper)))
+      )
+  } else {
+    # Only evaluate SMD
+    balance_data <- balance_data %>%
+      dplyr::mutate(
+        poor_balance = (.data$mean_balance > smd_threshold)
+      )
+  }
+
+  # Add asterisk AFTER poor_balance is calculated
   balance_data <- balance_data %>%
     dplyr::mutate(
-      # Handle NA values in variance_balance - treat NA comparisons as FALSE
-      vr_poor = !is.na(.data$variance_balance) &
-        ((.data$variance_balance < vr_lower) | (.data$variance_balance > vr_upper)),
-      smd_poor = !is.na(.data$mean_balance) & (.data$mean_balance > smd_threshold),
-      poor_balance = vr_poor | smd_poor,
-      # Add asterisk to variable name if poorly balanced
-      pretty_variable = dplyr::case_when(
-        poor_balance ~ paste0(.data$pretty_variable, "*"),
-        TRUE ~ .data$pretty_variable
-      )
-    ) %>%
-    dplyr::select(-vr_poor, -smd_poor)  # Remove temporary columns
+      pretty_variable = ifelse(.data$poor_balance,
+                               paste0(.data$pretty_variable, "*"),
+                               .data$pretty_variable)
+    )
 
   # Count number of poorly balanced covariates
   n_poor_balance <- sum(balance_data$poor_balance, na.rm = TRUE)
@@ -229,9 +226,7 @@ create_balance_table <- function(
       model_display = ifelse(duplicated(.data$model), "", .data$model)
     ) %>%
     dplyr::filter(!is.na(.data$variance_balance) | !is.na(.data$mean_balance)) %>%
-    # Assign a block ID to each group of rows by model
     dplyr::mutate(group_id = with(rle(.data$model), rep(seq_along(values), lengths))) %>%
-    # Create shading flag
     dplyr::mutate(
       shade_flag = shade_alternating & (.data$group_id %% 2 == 1),
       row_id = dplyr::row_number()
@@ -253,7 +248,6 @@ create_balance_table <- function(
       decimals = decimal_places
     )
 
-  # Add header with optional subtitle
   if (!is.null(subtitle)) {
     gt_table <- gt_table %>%
       gt::tab_header(
@@ -269,7 +263,6 @@ create_balance_table <- function(
 
   # Apply styling
   gt_table <- gt_table %>%
-    # Bold the model display values (non-empty cells)
     gt::tab_style(
       style = gt::cell_text(weight = "bold"),
       locations = gt::cells_body(
@@ -277,8 +270,6 @@ create_balance_table <- function(
         rows = table_data$model_display != ""
       )
     ) %>%
-
-    # Set font size for all elements
     gt::tab_style(
       style = gt::cell_text(size = font_size),
       locations = list(
@@ -286,16 +277,12 @@ create_balance_table <- function(
         gt::cells_body(columns = gt::everything())
       )
     ) %>%
-
-    # Apply highlight to every other model block
     gt::tab_style(
       style = gt::cell_fill(color = "#f7f7f7"),
       locations = gt::cells_body(
         rows = table_data$row_id[table_data$shade_flag]
       )
     ) %>%
-
-    # Table options
     gt::tab_options(
       table.font.size = gt::px(font_size),
       table.font.names = font_family,
@@ -303,27 +290,35 @@ create_balance_table <- function(
       row_group.padding = gt::px(8),
       heading.padding = gt::px(8)
     ) %>%
-
-    # Alignment
     gt::cols_align(align = "left", columns = c("pretty_variable", "model_display")) %>%
     gt::cols_align(align = "center", columns = c("mean_balance", "variance_balance"))
 
-  # Hide utility columns and optionally model column
+  # Hide columns
   columns_to_hide <- c("row_id", "shade_flag", "poor_balance")
   if (hide_model_column) {
     columns_to_hide <- c(columns_to_hide, "model_display")
   }
+  if (!has_variance_data) {
+    columns_to_hide <- c(columns_to_hide, "variance_balance")
+  }
 
   gt_table <- gt_table %>%
-    gt::cols_hide(columns = columns_to_hide) %>%
+    gt::cols_hide(columns = columns_to_hide)
 
-    # Add source note explaining asterisk
-    gt::tab_source_note(
-      source_note = gt::md(paste0(
-        "*Indicates poor balance (SMD > ", smd_threshold,
-        " or VR < ", vr_lower, " or VR > ", vr_upper, ")"
-      ))
+  # Add source note - adjust based on whether VR data exists
+  if (has_variance_data) {
+    source_note_text <- paste0(
+      "*Indicates poor balance (SMD > ", smd_threshold,
+      " or VR < ", vr_lower, " or VR > ", vr_upper, ")"
     )
+  } else {
+    source_note_text <- paste0(
+      "*Indicates poor balance (SMD > ", smd_threshold, ")"
+    )
+  }
+
+  gt_table <- gt_table %>%
+    gt::tab_source_note(source_note = gt::md(source_note_text))
 
   # Save if filename provided
   if (!is.null(filename)) {
@@ -340,6 +335,9 @@ create_balance_table <- function(
   cat("  Poorly balanced covariates:", n_poor_balance, "\n")
   if (hide_model_column) {
     cat("  Model column hidden (single model, no custom labels)\n")
+  }
+  if (!has_variance_data) {
+    cat("  VR column hidden (no variance ratio data available)\n")
   }
 
   return(gt_table)
