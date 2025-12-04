@@ -71,9 +71,10 @@ create_balance_table <- function(
     font_size = 16,
     font_family = "Times New Roman",
     shade_alternating = TRUE,
-    smd_threshold = 0.1,      # NEW: SMD threshold for balance
-    vr_lower = 0.5,           # NEW: Lower VR threshold
-    vr_upper = 2.0            # NEW: Upper VR threshold
+    smd_threshold = 0.1,
+    vr_lower = 0.5,
+    vr_upper = 2.0,
+    show_model_column = TRUE  # NEW: Option to show/hide model column
 ) {
 
   # Check required packages
@@ -158,6 +159,10 @@ create_balance_table <- function(
     stop("balance_results must be a data frame or list output from extract_cbps_results()")
   }
 
+  # NEW: Check if we should hide model column
+  n_models <- length(unique(balance_data$model))
+  hide_model_column <- (n_models == 1 && is.null(model_labels) && show_model_column == TRUE)
+
   # STEP 2: Apply pretty labels for models
   if (!is.null(model_labels)) {
     balance_data <- balance_data %>%
@@ -189,7 +194,7 @@ create_balance_table <- function(
       dplyr::mutate(pretty_variable = .data$variable)
   }
 
-  # STEP 3.5: NEW - Flag poor balance and add asterisk
+  # STEP 3.5: Flag poor balance and add asterisk
   balance_data <- balance_data %>%
     dplyr::mutate(
       poor_balance = (.data$mean_balance > smd_threshold) |
@@ -288,12 +293,18 @@ create_balance_table <- function(
 
     # Alignment
     gt::cols_align(align = "left", columns = c("pretty_variable", "model_display")) %>%
-    gt::cols_align(align = "center", columns = c("mean_balance", "variance_balance")) %>%
+    gt::cols_align(align = "center", columns = c("mean_balance", "variance_balance"))
 
-    # Hide utility columns
-    gt::cols_hide(columns = c("row_id", "shade_flag", "poor_balance")) %>%
+  # NEW: Hide model column if single model and no custom labels
+  columns_to_hide <- c("row_id", "shade_flag", "poor_balance")
+  if (hide_model_column) {
+    columns_to_hide <- c(columns_to_hide, "model_display")
+  }
 
-    # NEW: Add source note explaining asterisk
+  gt_table <- gt_table %>%
+    gt::cols_hide(columns = columns_to_hide) %>%
+
+    # Add source note explaining asterisk
     gt::tab_source_note(
       source_note = gt::md(paste0(
         "*Indicates poor balance (SMD > ", smd_threshold,
@@ -309,12 +320,14 @@ create_balance_table <- function(
 
   # Print summary
   n_total <- nrow(table_data)
-  n_models <- length(unique(balance_data$model))
 
   cat("\nBalance Table Summary:\n")
   cat("  Number of models:", n_models, "\n")
   cat("  Total covariate rows:", n_total, "\n")
   cat("  Poorly balanced covariates:", n_poor_balance, "\n")
+  if (hide_model_column) {
+    cat("  Model column hidden (single model, no custom labels)\n")
+  }
 
   return(gt_table)
 }
