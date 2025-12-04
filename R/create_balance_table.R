@@ -206,16 +206,18 @@ create_balance_table <- function(
   # STEP 3.5: Flag poor balance and add asterisk
   balance_data <- balance_data %>%
     dplyr::mutate(
-      # Handle NA values in variance_balance properly
-      poor_balance = (.data$mean_balance > smd_threshold) |
-        ((!is.na(.data$variance_balance)) &
-           ((.data$variance_balance < vr_lower) |
-              (.data$variance_balance > vr_upper))),
+      # Handle NA values in variance_balance - treat NA comparisons as FALSE
+      vr_poor = !is.na(.data$variance_balance) &
+        ((.data$variance_balance < vr_lower) | (.data$variance_balance > vr_upper)),
+      smd_poor = !is.na(.data$mean_balance) & (.data$mean_balance > smd_threshold),
+      poor_balance = vr_poor | smd_poor,
       # Add asterisk to variable name if poorly balanced
-      pretty_variable = ifelse(is.na(.data$poor_balance) | !.data$poor_balance,
-                               .data$pretty_variable,
-                               paste0(.data$pretty_variable, "*"))
-    )
+      pretty_variable = dplyr::case_when(
+        poor_balance ~ paste0(.data$pretty_variable, "*"),
+        TRUE ~ .data$pretty_variable
+      )
+    ) %>%
+    dplyr::select(-vr_poor, -smd_poor)  # Remove temporary columns
 
   # Count number of poorly balanced covariates
   n_poor_balance <- sum(balance_data$poor_balance, na.rm = TRUE)
