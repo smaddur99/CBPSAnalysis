@@ -203,7 +203,7 @@ create_balance_table_grouped <- function(
       dplyr::mutate(poor_balance = (.data$mean_balance > smd_threshold))
   }
 
-  # Add asterisk to poorly balanced variables
+  # Add asterisk to poorly balanced variables (AFTER poor_balance is calculated)
   balance_data <- balance_data %>%
     dplyr::mutate(
       covariate_name = ifelse(.data$poor_balance,
@@ -217,20 +217,17 @@ create_balance_table_grouped <- function(
   table_data <- balance_data %>%
     dplyr::filter(!is.na(.data$variance_balance) | !is.na(.data$mean_balance)) %>%
     dplyr::arrange(.data$model_group, .data$covariate_name) %>%
-    dplyr::mutate(
-      row_id = dplyr::row_number(),
-      is_significant = .data$poor_balance  # For potential highlighting
-    ) %>%
+    dplyr::mutate(row_id = dplyr::row_number()) %>%
     dplyr::select(
       .data$row_id,
       .data$model_group,      # Row groups (like "Depression Sensitivity")
-      .data$covariate_name,   # Rows within groups (like "Perceived Social Support")
+      .data$covariate_name,   # Rows within groups (like "MGM Age*")
       .data$mean_balance,
       .data$variance_balance,
-      .data$is_significant
+      .data$poor_balance
     )
 
-  # Create gt table with MODELS as row groups (like sensitivity table)
+  # Create gt table with MODELS as row groups
   gt_table <- table_data %>%
     gt::gt(groupname_col = "model_group") %>%
     gt::cols_label(
@@ -255,7 +252,7 @@ create_balance_table_grouped <- function(
       gt::tab_header(title = gt::md(table_title))
   }
 
-  # Apply styling (similar to sens table)
+  # Apply styling
   gt_table <- gt_table %>%
     gt::tab_style(
       style = gt::cell_text(weight = "bold"),
@@ -283,21 +280,8 @@ create_balance_table_grouped <- function(
     gt::cols_align(align = "left", columns = "covariate_name") %>%
     gt::cols_align(align = "center", columns = c("mean_balance", "variance_balance"))
 
-  # Optional: Highlight poor balance like sens table highlights significant results
-  if (any(table_data$is_significant)) {
-    gt_table <- gt_table %>%
-      gt::tab_style(
-        style = list(
-          gt::cell_fill(color = "#e3f2fd")
-        ),
-        locations = gt::cells_body(
-          rows = table_data$row_id[table_data$is_significant]
-        )
-      )
-  }
-
   # Hide appropriate columns
-  columns_to_hide <- c("row_id", "is_significant")
+  columns_to_hide <- c("row_id", "poor_balance")
   if (!has_variance_data) {
     columns_to_hide <- c(columns_to_hide, "variance_balance")
   }
