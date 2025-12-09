@@ -84,7 +84,7 @@ create_balance_table_grouped <- function(
          "\nPlease install these packages.")
   }
 
-  # Process input data (same logic as original function)
+  # Process input data (same logic as before)
   if (is.data.frame(balance_results)) {
     balance_data <- balance_results
 
@@ -158,32 +158,35 @@ create_balance_table_grouped <- function(
   # Get number of models
   n_models <- length(unique(balance_data$model))
 
-  # Apply model labels if provided
+  # Apply model labels if provided (this creates the row group names)
   if (!is.null(model_labels)) {
     balance_data <- balance_data %>%
       dplyr::mutate(
-        model = ifelse(.data$model %in% names(model_labels),
-                       model_labels[.data$model],
-                       .data$model)
+        model_group = ifelse(.data$model %in% names(model_labels),
+                             model_labels[.data$model],
+                             .data$model)
       )
+  } else {
+    balance_data <- balance_data %>%
+      dplyr::mutate(model_group = .data$model)
   }
 
   # Apply variable labels if provided
   if (!is.null(variable_labels)) {
     if (is.function(variable_labels)) {
       balance_data <- balance_data %>%
-        dplyr::mutate(pretty_variable = variable_labels(.data$variable))
+        dplyr::mutate(covariate_name = variable_labels(.data$variable))
     } else if (is.character(variable_labels)) {
       balance_data <- balance_data %>%
         dplyr::mutate(
-          pretty_variable = ifelse(.data$variable %in% names(variable_labels),
-                                   variable_labels[.data$variable],
-                                   .data$variable)
+          covariate_name = ifelse(.data$variable %in% names(variable_labels),
+                                  variable_labels[.data$variable],
+                                  .data$variable)
         )
     }
   } else {
     balance_data <- balance_data %>%
-      dplyr::mutate(pretty_variable = .data$variable)
+      dplyr::mutate(covariate_name = .data$variable)
   }
 
   # Identify poor balance
@@ -203,31 +206,35 @@ create_balance_table_grouped <- function(
   # Add asterisk to poorly balanced variables
   balance_data <- balance_data %>%
     dplyr::mutate(
-      pretty_variable = ifelse(.data$poor_balance,
-                               paste0(.data$pretty_variable, "*"),
-                               .data$pretty_variable)
+      covariate_name = ifelse(.data$poor_balance,
+                              paste0(.data$covariate_name, "*"),
+                              .data$covariate_name)
     )
 
   n_poor_balance <- sum(balance_data$poor_balance, na.rm = TRUE)
 
-  # Prepare table data with row groups
+  # Prepare table data - MODELS as row groups, COVARIATES as rows within groups
   table_data <- balance_data %>%
     dplyr::filter(!is.na(.data$variance_balance) | !is.na(.data$mean_balance)) %>%
-    dplyr::mutate(row_id = dplyr::row_number()) %>%
+    dplyr::arrange(.data$model_group, .data$covariate_name) %>%
+    dplyr::mutate(
+      row_id = dplyr::row_number(),
+      is_significant = .data$poor_balance  # For potential highlighting
+    ) %>%
     dplyr::select(
       .data$row_id,
-      .data$model,
-      .data$pretty_variable,
+      .data$model_group,      # Row groups (like "Depression Sensitivity")
+      .data$covariate_name,   # Rows within groups (like "Perceived Social Support")
       .data$mean_balance,
       .data$variance_balance,
-      .data$poor_balance
+      .data$is_significant
     )
 
-  # Create gt table with row groups
+  # Create gt table with MODELS as row groups (like sensitivity table)
   gt_table <- table_data %>%
-    gt::gt(groupname_col = "model") %>%
+    gt::gt(groupname_col = "model_group") %>%
     gt::cols_label(
-      pretty_variable = "Covariate",
+      covariate_name = "Covariate",
       mean_balance = "SMD",
       variance_balance = "VR"
     ) %>%
@@ -248,8 +255,12 @@ create_balance_table_grouped <- function(
       gt::tab_header(title = gt::md(table_title))
   }
 
-  # Apply styling
+  # Apply styling (similar to sens table)
   gt_table <- gt_table %>%
+    gt::tab_style(
+      style = gt::cell_text(weight = "bold"),
+      locations = gt::cells_body(columns = "covariate_name")
+    ) %>%
     gt::tab_style(
       style = gt::cell_text(size = font_size),
       locations = list(
@@ -269,11 +280,24 @@ create_balance_table_grouped <- function(
       row_group.padding = gt::px(8),
       heading.padding = gt::px(8)
     ) %>%
-    gt::cols_align(align = "left", columns = "pretty_variable") %>%
+    gt::cols_align(align = "left", columns = "covariate_name") %>%
     gt::cols_align(align = "center", columns = c("mean_balance", "variance_balance"))
 
+  # Optional: Highlight poor balance like sens table highlights significant results
+  if (any(table_data$is_significant)) {
+    gt_table <- gt_table %>%
+      gt::tab_style(
+        style = list(
+          gt::cell_fill(color = "#e3f2fd")
+        ),
+        locations = gt::cells_body(
+          rows = table_data$row_id[table_data$is_significant]
+        )
+      )
+  }
+
   # Hide appropriate columns
-  columns_to_hide <- c("row_id", "poor_balance")
+  columns_to_hide <- c("row_id", "is_significant")
   if (!has_variance_data) {
     columns_to_hide <- c(columns_to_hide, "variance_balance")
   }
@@ -302,9 +326,11 @@ create_balance_table_grouped <- function(
 
   # Print summary
   n_total <- nrow(table_data)
+  n_covariates <- length(unique(table_data$covariate_name))
   cat("\nBalance Table Summary:\n")
   cat("  Number of models:", n_models, "\n")
-  cat("  Total covariate rows:", n_total, "\n")
+  cat("  Number of unique covariates:", n_covariates, "\n")
+  cat("  Total rows:", n_total, "\n")
   cat("  Poorly balanced covariates:", n_poor_balance, "\n")
   if (!has_variance_data) {
     cat("  VR column hidden (no variance ratio data available)\n")
