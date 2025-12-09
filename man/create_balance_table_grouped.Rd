@@ -9,7 +9,8 @@ create_balance_table_grouped(
   table_title = "Covariate Balance After Weighting",
   subtitle = NULL,
   filename = NULL,
-  model_labels = NULL,
+  sensitivity_labels = NULL,
+  outcome_labels = NULL,
   variable_labels = NULL,
   decimal_places = 3,
   font_size = 16,
@@ -33,8 +34,6 @@ create_balance_table_grouped(
 
 \item{filename}{Character. Optional filename to save the table (default: NULL)}
 
-\item{model_labels}{Named character vector. Pretty names for models (default: NULL)}
-
 \item{variable_labels}{Named character vector or function. Pretty names for variables.
 If a function, it should take variable names and return formatted names (default: NULL)}
 
@@ -43,6 +42,8 @@ If a function, it should take variable names and return formatted names (default
 \item{font_size}{Integer. Font size for the table (default: 16)}
 
 \item{font_family}{Character. Font family for the table (default: "Times New Roman")}
+
+\item{model_labels}{Named character vector. Pretty names for models (default: NULL)}
 
 \item{shade_alternating}{Logical. Whether to shade alternating model groups (default: TRUE)}
 }

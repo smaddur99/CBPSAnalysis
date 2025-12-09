@@ -85,7 +85,7 @@ create_balance_table_grouped <- function(
          "\nPlease install these packages.")
   }
 
-  # Process input data
+  # Process input data (same as before)
   if (is.data.frame(balance_results)) {
     balance_data <- balance_results
 
@@ -102,7 +102,6 @@ create_balance_table_grouped <- function(
       stop("Input data frame must contain 'diff_adj' or 'mean_balance' column")
     }
 
-    # Handle variance ratio - check for var_ratio_adj in the data
     if ("var_ratio_adj" %in% names(balance_data)) {
       balance_data <- balance_data %>%
         dplyr::mutate(variance_balance = .data$var_ratio_adj)
@@ -127,14 +126,14 @@ create_balance_table_grouped <- function(
             .data$var_ratio_adj else NA
         )
     } else {
-      # Multiple models - THIS IS WHERE MODEL NAMES GET ADDED
+      # Multiple models
       balance_list <- list()
       for (model_name in names(balance_results)) {
         model_data <- balance_results[[model_name]]
         if ("balance" %in% names(model_data)) {
           temp_df <- model_data$balance %>%
             dplyr::mutate(
-              model = model_name,  # <-- Model name comes from LIST NAMES
+              model = model_name,
               mean_balance = abs(.data$diff_adj),
               variance_balance = if ("var_ratio_adj" %in% names(.))
                 .data$var_ratio_adj else NA
@@ -154,16 +153,13 @@ create_balance_table_grouped <- function(
     stop("balance_results must be a data frame or list output from extract_cbps_results()")
   }
 
-  # NOW balance_data has a 'model' column that we can parse
   # Check if we have variance data
   has_variance_data <- !all(is.na(balance_data$variance_balance))
 
   # Parse model names to extract hierarchy
-  # Expected format: "Sensitivity Type: Outcome" or just "Outcome"
   balance_data <- balance_data %>%
     dplyr::mutate(
       has_colon = stringr::str_detect(.data$model, ":"),
-      # If has colon, split on first colon
       sensitivity_type = dplyr::case_when(
         .data$has_colon ~ stringr::str_trim(stringr::str_split_fixed(.data$model, ":", 2)[,1]),
         TRUE ~ "Main Models"
@@ -173,7 +169,7 @@ create_balance_table_grouped <- function(
         TRUE ~ .data$model
       )
     ) %>%
-    dplyr::select(-has_colon)  # Remove temporary column
+    dplyr::select(-has_colon)
 
   # Apply sensitivity labels (Level 1)
   if (!is.null(sensitivity_labels)) {
@@ -243,35 +239,71 @@ create_balance_table_grouped <- function(
 
   n_poor_balance <- sum(balance_data$poor_balance, na.rm = TRUE)
 
-  # Create combined group for gt (Level 1 + Level 2)
-  table_data <- balance_data %>%
+  # CREATE NESTED STRUCTURE: Insert outcome header rows
+  # For each sensitivity + outcome combo, create a header row
+  nested_data <- balance_data %>%
     dplyr::filter(!is.na(.data$variance_balance) | !is.na(.data$mean_balance)) %>%
-    dplyr::mutate(
-      combined_group = paste0(.data$sensitivity_type, ": ", .data$outcome_type)
-    ) %>%
     dplyr::arrange(.data$sensitivity_type, .data$outcome_type, .data$covariate_name) %>%
-    dplyr::mutate(row_id = dplyr::row_number()) %>%
-    dplyr::select(
-      .data$row_id,
-      .data$combined_group,
-      .data$covariate_name,
-      .data$mean_balance,
-      .data$variance_balance,
-      .data$poor_balance
-    )
+    dplyr::group_by(.data$sensitivity_type, .data$outcome_type) %>%
+    dplyr::group_modify(~ {
+      # Create outcome header row
+      header_row <- tibble::tibble(
+        display_text = .x$outcome_type[1],
+        mean_balance = NA_real_,
+        variance_balance = NA_real_,
+        poor_balance = FALSE,
+        is_header = TRUE
+      )
 
-  # Create gt table with combined groups
-  gt_table <- table_data %>%
-    gt::gt(groupname_col = "combined_group") %>%
+      # Create covariate data rows
+      data_rows <- .x %>%
+        dplyr::mutate(
+          display_text = .data$covariate_name,
+          is_header = FALSE
+        ) %>%
+        dplyr::select(display_text, mean_balance, variance_balance, poor_balance, is_header)
+
+      # Combine header + data
+      dplyr::bind_rows(header_row, data_rows)
+    }) %>%
+    dplyr::ungroup() %>%
+    dplyr::mutate(row_id = dplyr::row_number())
+
+  # Create gt table with sensitivity type as row groups
+  gt_table <- nested_data %>%
+    gt::gt(groupname_col = "sensitivity_type") %>%
     gt::cols_label(
-      covariate_name = "Covariate",
+      display_text = "Covariate",
       mean_balance = "SMD",
       variance_balance = "VR"
-    ) %>%
-    gt::fmt_number(
-      columns = c("mean_balance", "variance_balance"),
-      decimals = decimal_places
     )
+
+  # Format numbers only for non-header rows
+  if (has_variance_data) {
+    gt_table <- gt_table %>%
+      gt::fmt_number(
+        columns = c("mean_balance", "variance_balance"),
+        decimals = decimal_places,
+        rows = !nested_data$is_header
+      ) %>%
+      gt::sub_missing(
+        columns = c("mean_balance", "variance_balance"),
+        rows = nested_data$is_header,
+        missing_text = ""
+      )
+  } else {
+    gt_table <- gt_table %>%
+      gt::fmt_number(
+        columns = "mean_balance",
+        decimals = decimal_places,
+        rows = !nested_data$is_header
+      ) %>%
+      gt::sub_missing(
+        columns = "mean_balance",
+        rows = nested_data$is_header,
+        missing_text = ""
+      )
+  }
 
   # Add title/subtitle
   if (!is.null(subtitle)) {
@@ -287,13 +319,25 @@ create_balance_table_grouped <- function(
 
   # Apply styling
   gt_table <- gt_table %>%
-    # Indent covariate names to show they're nested
+    # Bold outcome headers
+    gt::tab_style(
+      style = gt::cell_text(weight = "bold", size = font_size),
+      locations = gt::cells_body(
+        columns = "display_text",
+        rows = nested_data$is_header
+      )
+    ) %>%
+    # Indent covariate rows
     gt::text_transform(
-      locations = gt::cells_body(columns = "covariate_name"),
+      locations = gt::cells_body(
+        columns = "display_text",
+        rows = !nested_data$is_header
+      ),
       fn = function(x) {
-        paste0("&nbsp;&nbsp;&nbsp;&nbsp;", x)  # Add indentation
+        paste0("&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;", x)
       }
     ) %>%
+    # Base font size
     gt::tab_style(
       style = gt::cell_text(size = font_size),
       locations = list(
@@ -302,6 +346,7 @@ create_balance_table_grouped <- function(
         gt::cells_row_groups()
       )
     ) %>%
+    # Bold row group headers
     gt::tab_style(
       style = gt::cell_text(weight = "bold", size = font_size + 1),
       locations = gt::cells_row_groups()
@@ -309,15 +354,15 @@ create_balance_table_grouped <- function(
     gt::tab_options(
       table.font.size = gt::px(font_size),
       table.font.names = font_family,
-      data_row.padding = gt::px(6),
+      data_row.padding = gt::px(4),
       row_group.padding = gt::px(10),
       heading.padding = gt::px(8)
     ) %>%
-    gt::cols_align(align = "left", columns = "covariate_name") %>%
+    gt::cols_align(align = "left", columns = "display_text") %>%
     gt::cols_align(align = "center", columns = c("mean_balance", "variance_balance"))
 
   # Hide appropriate columns
-  columns_to_hide <- c("row_id", "poor_balance")
+  columns_to_hide <- c("row_id", "poor_balance", "is_header")
   if (!has_variance_data) {
     columns_to_hide <- c(columns_to_hide, "variance_balance")
   }
@@ -345,7 +390,7 @@ create_balance_table_grouped <- function(
   }
 
   # Print summary
-  n_total <- nrow(table_data)
+  n_total <- nrow(nested_data)
   n_sensitivity_types <- length(unique(balance_data$sensitivity_type))
   n_outcomes <- length(unique(balance_data$outcome_type))
   n_covariates <- length(unique(gsub("\\*", "", balance_data$covariate_name)))
@@ -354,7 +399,7 @@ create_balance_table_grouped <- function(
   cat("  Number of sensitivity analyses:", n_sensitivity_types, "\n")
   cat("  Number of outcomes:", n_outcomes, "\n")
   cat("  Number of unique covariates:", n_covariates, "\n")
-  cat("  Total rows:", n_total, "\n")
+  cat("  Total rows (including headers):", n_total, "\n")
   cat("  Poorly balanced covariates:", n_poor_balance, "\n")
   if (!has_variance_data) {
     cat("  VR column hidden (no variance ratio data available)\n")
