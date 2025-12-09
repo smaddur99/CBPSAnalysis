@@ -65,7 +65,8 @@ create_balance_table_grouped <- function(
     table_title = "Covariate Balance After Weighting",
     subtitle = NULL,
     filename = NULL,
-    model_labels = NULL,
+    sensitivity_labels = NULL,
+    outcome_labels = NULL,
     variable_labels = NULL,
     decimal_places = 3,
     font_size = 16,
@@ -76,7 +77,7 @@ create_balance_table_grouped <- function(
 ) {
 
   # Check required packages
-  required_packages <- c("dplyr", "gt")
+  required_packages <- c("dplyr", "gt", "stringr")
   missing_packages <- required_packages[!sapply(required_packages,
                                                 requireNamespace, quietly = TRUE)]
   if (length(missing_packages) > 0) {
@@ -84,7 +85,7 @@ create_balance_table_grouped <- function(
          "\nPlease install these packages.")
   }
 
-  # Process input data (same logic as before)
+  # Process input data
   if (is.data.frame(balance_results)) {
     balance_data <- balance_results
 
@@ -101,10 +102,11 @@ create_balance_table_grouped <- function(
       stop("Input data frame must contain 'diff_adj' or 'mean_balance' column")
     }
 
+    # Handle variance ratio - check for var_ratio_adj in the data
     if ("var_ratio_adj" %in% names(balance_data)) {
       balance_data <- balance_data %>%
         dplyr::mutate(variance_balance = .data$var_ratio_adj)
-    } else if (!"variance_balance" %in% names(balance_data)) {
+    } else {
       balance_data$variance_balance <- NA
     }
 
@@ -125,14 +127,14 @@ create_balance_table_grouped <- function(
             .data$var_ratio_adj else NA
         )
     } else {
-      # Multiple models
+      # Multiple models - THIS IS WHERE MODEL NAMES GET ADDED
       balance_list <- list()
       for (model_name in names(balance_results)) {
         model_data <- balance_results[[model_name]]
         if ("balance" %in% names(model_data)) {
           temp_df <- model_data$balance %>%
             dplyr::mutate(
-              model = model_name,
+              model = model_name,  # <-- Model name comes from LIST NAMES
               mean_balance = abs(.data$diff_adj),
               variance_balance = if ("var_ratio_adj" %in% names(.))
                 .data$var_ratio_adj else NA
@@ -152,26 +154,52 @@ create_balance_table_grouped <- function(
     stop("balance_results must be a data frame or list output from extract_cbps_results()")
   }
 
+  # NOW balance_data has a 'model' column that we can parse
   # Check if we have variance data
   has_variance_data <- !all(is.na(balance_data$variance_balance))
 
-  # Get number of models
-  n_models <- length(unique(balance_data$model))
+  # Parse model names to extract hierarchy
+  # Expected format: "Sensitivity Type: Outcome" or just "Outcome"
+  balance_data <- balance_data %>%
+    dplyr::mutate(
+      has_colon = stringr::str_detect(.data$model, ":"),
+      # If has colon, split on first colon
+      sensitivity_type = dplyr::case_when(
+        .data$has_colon ~ stringr::str_trim(stringr::str_split_fixed(.data$model, ":", 2)[,1]),
+        TRUE ~ "Main Models"
+      ),
+      outcome_type = dplyr::case_when(
+        .data$has_colon ~ stringr::str_trim(stringr::str_split_fixed(.data$model, ":", 2)[,2]),
+        TRUE ~ .data$model
+      )
+    ) %>%
+    dplyr::select(-has_colon)  # Remove temporary column
 
-  # Apply model labels if provided (this creates the row group names)
-  if (!is.null(model_labels)) {
+  # Apply sensitivity labels (Level 1)
+  if (!is.null(sensitivity_labels)) {
     balance_data <- balance_data %>%
       dplyr::mutate(
-        model_group = ifelse(.data$model %in% names(model_labels),
-                             model_labels[.data$model],
-                             .data$model)
+        sensitivity_type = dplyr::case_when(
+          .data$sensitivity_type %in% names(sensitivity_labels) ~
+            sensitivity_labels[.data$sensitivity_type],
+          TRUE ~ .data$sensitivity_type
+        )
       )
-  } else {
-    balance_data <- balance_data %>%
-      dplyr::mutate(model_group = .data$model)
   }
 
-  # Apply variable labels if provided
+  # Apply outcome labels (Level 2)
+  if (!is.null(outcome_labels)) {
+    balance_data <- balance_data %>%
+      dplyr::mutate(
+        outcome_type = dplyr::case_when(
+          .data$outcome_type %in% names(outcome_labels) ~
+            outcome_labels[.data$outcome_type],
+          TRUE ~ .data$outcome_type
+        )
+      )
+  }
+
+  # Apply variable labels (Level 3)
   if (!is.null(variable_labels)) {
     if (is.function(variable_labels)) {
       balance_data <- balance_data %>%
@@ -179,9 +207,11 @@ create_balance_table_grouped <- function(
     } else if (is.character(variable_labels)) {
       balance_data <- balance_data %>%
         dplyr::mutate(
-          covariate_name = ifelse(.data$variable %in% names(variable_labels),
-                                  variable_labels[.data$variable],
-                                  .data$variable)
+          covariate_name = dplyr::case_when(
+            .data$variable %in% names(variable_labels) ~
+              variable_labels[.data$variable],
+            TRUE ~ .data$variable
+          )
         )
     }
   } else {
@@ -203,7 +233,7 @@ create_balance_table_grouped <- function(
       dplyr::mutate(poor_balance = (.data$mean_balance > smd_threshold))
   }
 
-  # Add asterisk to poorly balanced variables (AFTER poor_balance is calculated)
+  # Add asterisk to poorly balanced variables
   balance_data <- balance_data %>%
     dplyr::mutate(
       covariate_name = ifelse(.data$poor_balance,
@@ -213,23 +243,26 @@ create_balance_table_grouped <- function(
 
   n_poor_balance <- sum(balance_data$poor_balance, na.rm = TRUE)
 
-  # Prepare table data - MODELS as row groups, COVARIATES as rows within groups
+  # Create combined group for gt (Level 1 + Level 2)
   table_data <- balance_data %>%
     dplyr::filter(!is.na(.data$variance_balance) | !is.na(.data$mean_balance)) %>%
-    dplyr::arrange(.data$model_group, .data$covariate_name) %>%
+    dplyr::mutate(
+      combined_group = paste0(.data$sensitivity_type, ": ", .data$outcome_type)
+    ) %>%
+    dplyr::arrange(.data$sensitivity_type, .data$outcome_type, .data$covariate_name) %>%
     dplyr::mutate(row_id = dplyr::row_number()) %>%
     dplyr::select(
       .data$row_id,
-      .data$model_group,      # Row groups (like "Depression Sensitivity")
-      .data$covariate_name,   # Rows within groups (like "MGM Age*")
+      .data$combined_group,
+      .data$covariate_name,
       .data$mean_balance,
       .data$variance_balance,
       .data$poor_balance
     )
 
-  # Create gt table with MODELS as row groups
+  # Create gt table with combined groups
   gt_table <- table_data %>%
-    gt::gt(groupname_col = "model_group") %>%
+    gt::gt(groupname_col = "combined_group") %>%
     gt::cols_label(
       covariate_name = "Covariate",
       mean_balance = "SMD",
@@ -254,9 +287,12 @@ create_balance_table_grouped <- function(
 
   # Apply styling
   gt_table <- gt_table %>%
-    gt::tab_style(
-      style = gt::cell_text(weight = "bold"),
-      locations = gt::cells_body(columns = "covariate_name")
+    # Indent covariate names to show they're nested
+    gt::text_transform(
+      locations = gt::cells_body(columns = "covariate_name"),
+      fn = function(x) {
+        paste0("&nbsp;&nbsp;&nbsp;&nbsp;", x)  # Add indentation
+      }
     ) %>%
     gt::tab_style(
       style = gt::cell_text(size = font_size),
@@ -267,14 +303,14 @@ create_balance_table_grouped <- function(
       )
     ) %>%
     gt::tab_style(
-      style = gt::cell_text(weight = "bold"),
+      style = gt::cell_text(weight = "bold", size = font_size + 1),
       locations = gt::cells_row_groups()
     ) %>%
     gt::tab_options(
       table.font.size = gt::px(font_size),
       table.font.names = font_family,
-      data_row.padding = gt::px(8),
-      row_group.padding = gt::px(8),
+      data_row.padding = gt::px(6),
+      row_group.padding = gt::px(10),
       heading.padding = gt::px(8)
     ) %>%
     gt::cols_align(align = "left", columns = "covariate_name") %>%
@@ -310,9 +346,13 @@ create_balance_table_grouped <- function(
 
   # Print summary
   n_total <- nrow(table_data)
-  n_covariates <- length(unique(table_data$covariate_name))
+  n_sensitivity_types <- length(unique(balance_data$sensitivity_type))
+  n_outcomes <- length(unique(balance_data$outcome_type))
+  n_covariates <- length(unique(gsub("\\*", "", balance_data$covariate_name)))
+
   cat("\nBalance Table Summary:\n")
-  cat("  Number of models:", n_models, "\n")
+  cat("  Number of sensitivity analyses:", n_sensitivity_types, "\n")
+  cat("  Number of outcomes:", n_outcomes, "\n")
   cat("  Number of unique covariates:", n_covariates, "\n")
   cat("  Total rows:", n_total, "\n")
   cat("  Poorly balanced covariates:", n_poor_balance, "\n")
