@@ -16,6 +16,7 @@
 #'  \item \code{\link{quick_coef_table}}: Create quick coefficient table
 #'  \item \code{\link{create_sens_table}}: Create sensitivity model table
 #'  \item \code{\link{prepare_sens_table_data}}: Preparing data to create sensitivity model table
+#'  \item \code{\link{create_balance_table_grouped}}: Create publication tables for only covariate balance -  sensitivity model table
 #'
 #' }
 #'
