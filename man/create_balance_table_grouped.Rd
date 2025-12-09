@@ -14,11 +14,9 @@ create_balance_table_grouped(
   decimal_places = 3,
   font_size = 16,
   font_family = "Times New Roman",
-  shade_alternating = TRUE,
   smd_threshold = 0.1,
   vr_lower = 0.5,
-  vr_upper = 2,
-  use_row_groups = TRUE
+  vr_upper = 2
 )
 }
 \arguments{
