@@ -19,6 +19,7 @@
 #' @param bootstrap_seed Integer. Random seed for bootstrap (default: 20250417)
 #' @param balance_threshold_m Numeric. Balance threshold for mean differences (default: 0.1)
 #' @param balance_threshold_v Numeric. Balance threshold for variance ratios (default: 2)
+#' @param family A family object specifying the error distribution and link function for GLM (default: gaussian())
 #' @param verbose Logical. Whether to print progress messages (default: TRUE)
 #'
 #' @return A list containing:
@@ -57,13 +58,24 @@
 #'
 #' @examples
 #' \dontrun{
-#' # Basic usage
+#' # Basic usage with continuous outcome (default gaussian family)
 #' results <- cbps_weighted_analysis(
 #'   data = my_data,
 #'   outcome_var = "weight_percentile",
 #'   treatment_var = "treatment_group",
 #'   additional_predictors = c("age", "gender"),
 #'   imputation_vars = c("mother_age", "gestational_age"),
+#'   verbose = TRUE
+#' )
+#'
+#' # Binary outcome (e.g., preterm birth yes/no)
+#' results <- cbps_weighted_analysis(
+#'   data = my_data,
+#'   outcome_var = "preterm_birth",
+#'   treatment_var = "treatment_group",
+#'   additional_predictors = c("age", "gender"),
+#'   imputation_vars = c("mother_age", "gestational_age"),
+#'   family = binomial(),
 #'   verbose = TRUE
 #' )
 #'
@@ -108,6 +120,7 @@ cbps_weighted_analysis <- function(
     bootstrap_seed = 20250417,
     balance_threshold_m = 0.1,
     balance_threshold_v = 2,
+    family = gaussian(),
     verbose = TRUE
 ) {
 
@@ -505,11 +518,13 @@ cbps_weighted_analysis <- function(
 
   if (verbose) {
     cat("DEBUG: Outcome formula:", deparse(outcome_formula), "\n")
+    cat("DEBUG: GLM family:", family$family, "with", family$link, "link\n")
   }
 
   weighted_model <- glm(outcome_formula,
                         data = df_final,
-                        weights = cbps_weights$weights)
+                        weights = cbps_weights$weights,
+                        family = family)
 
   # CRITICAL FIX: Get the actual coefficient names from the fitted model
   # This handles interaction terms correctly (e.g., "var1*var2" becomes "var1:var2")
@@ -541,7 +556,7 @@ cbps_weighted_analysis <- function(
         return(rep(NA, length(model_coef_names_no_intercept)))
       }
 
-      model <- glm(outcome_formula, data = d, weights = weight)
+      model <- glm(outcome_formula, data = d, weights = weight, family = family)
 
       # Check if model converged
       if (!model$converged) {

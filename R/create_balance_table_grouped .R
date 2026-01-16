@@ -260,10 +260,6 @@ create_balance_table_grouped <- function(
   # Apply styling
   gt_table <- gt_table %>%
     gt::tab_style(
-      style = gt::cell_text(weight = "bold"),
-      locations = gt::cells_body(columns = "covariate_name")
-    ) %>%
-    gt::tab_style(
       style = gt::cell_text(size = font_size),
       locations = list(
         gt::cells_column_labels(columns = gt::everything()),

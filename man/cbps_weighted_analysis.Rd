@@ -21,6 +21,7 @@ cbps_weighted_analysis(
   bootstrap_seed = 20250417,
   balance_threshold_m = 0.1,
   balance_threshold_v = 2,
+  family = gaussian(),
   verbose = TRUE
 )
 }
@@ -57,6 +58,8 @@ cbps_weighted_analysis(
 
 \item{balance_threshold_v}{Numeric. Balance threshold for variance ratios (default: 2)}
 
+\item{family}{A family object specifying the error distribution and link function for GLM (default: gaussian())}
+
 \item{verbose}{Logical. Whether to print progress messages (default: TRUE)}
 }
 \value{
@@ -91,13 +94,24 @@ warnings about potential Missing At Random (MAR) or Missing Not At Random (MNAR)
 }
 \examples{
 \dontrun{
-# Basic usage
+# Basic usage with continuous outcome (default gaussian family)
 results <- cbps_weighted_analysis(
   data = my_data,
   outcome_var = "weight_percentile",
   treatment_var = "treatment_group",
   additional_predictors = c("age", "gender"),
   imputation_vars = c("mother_age", "gestational_age"),
+  verbose = TRUE
+)
+
+# Binary outcome (e.g., preterm birth yes/no)
+results <- cbps_weighted_analysis(
+  data = my_data,
+  outcome_var = "preterm_birth",
+  treatment_var = "treatment_group",
+  additional_predictors = c("age", "gender"),
+  imputation_vars = c("mother_age", "gestational_age"),
+  family = binomial(),
   verbose = TRUE
 )
 
