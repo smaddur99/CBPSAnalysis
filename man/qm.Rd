@@ -7,7 +7,7 @@
 qm(model, ...)
 }
 \arguments{
-\item{model}{A fitted model object or CBPS results list}
+\item{model}{A fitted model object or CBPS results list or extract_cbps_results output}
 
 \item{...}{Additional arguments passed to \code{quick_coef_table}}
 }
@@ -23,6 +23,7 @@ Just type \code{qm(model)} to quickly check your model coefficients.
 # Super quick inspection
 qm(model)
 qm(cbps_results)
+qm(extract_cbps_results(cbps_results))
 
 # With options
 qm(model, sig_only = TRUE)

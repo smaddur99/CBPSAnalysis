@@ -8,6 +8,7 @@ prepare_sens_table_data(
   model_list,
   sens_labels = NULL,
   treatment_var = NULL,
+  use_pooled = TRUE,
   verbose = TRUE
 )
 }

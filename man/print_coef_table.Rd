@@ -14,7 +14,7 @@ print_coef_table(
 )
 }
 \arguments{
-\item{model}{A fitted model object (glm, lm, or similar) OR a list from cbps_weighted_analysis}
+\item{model}{A fitted model object (glm, lm, or similar) OR a list from cbps_weighted_analysis OR output from extract_cbps_results}
 
 \item{digits}{Integer. Number of decimal places to round to (default: 3)}
 
@@ -39,6 +39,10 @@ the results with a header for easier reading during interactive analysis.
 results <- cbps_weighted_analysis(...)
 print_coef_table(results)
 print_coef_table(results, sig_only = TRUE)
+
+# Or with extracted results
+extracted <- extract_cbps_results(results)
+print_coef_table(extracted)
 }
 
 }

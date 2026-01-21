@@ -12,6 +12,7 @@ create_significance_table(
   model_labels = NULL,
   include_bootstrap = TRUE,
   include_fit_stats = TRUE,
+  include_mi_info = TRUE,
   decimal_places = 3,
   font_size = 16,
   font_family = "Times New Roman",

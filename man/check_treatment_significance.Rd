@@ -13,6 +13,7 @@ check_treatment_significance(
   include_bootstrap = TRUE,
   exclude_intercept = TRUE,
   focus_on_treatment_only = TRUE,
+  use_pooled = TRUE,
   verbose = TRUE
 )
 }
