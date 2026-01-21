@@ -52,7 +52,7 @@
 #' van Buuren, S. (2018). Flexible Imputation of Missing Data (2nd ed.). CRC Press.
 #'
 #' @export
-npcbps_weighted_analysis_mi <- function(
+npcbps_weighted_analysis <- function(
     data,
     outcome_var,
     treatment_var,
