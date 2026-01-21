@@ -62,7 +62,7 @@ extract_cbps_results <- function(cbps_results, include_balance_details = TRUE) {
     }
   }
 
-  # 1. EXTRACT MODEL ESTIMATES
+  # 1. EXTRACT MODEL ESTIMATES (unchanged)
   model_summary <- broom::tidy(cbps_results$model, conf.int = TRUE) %>%
     mutate(
       analysis_type = "GLM_Model",
@@ -78,7 +78,7 @@ extract_cbps_results <- function(cbps_results, include_balance_details = TRUE) {
       glm_conf_high = conf.high
     )
 
-  # 2. EXTRACT BOOTSTRAP RESULTS
+  # 2. EXTRACT BOOTSTRAP RESULTS (unchanged)
   bootstrap_results <- cbps_results$bootstrap_summary %>%
     mutate(
       analysis_type = "Bootstrap",
@@ -92,7 +92,7 @@ extract_cbps_results <- function(cbps_results, include_balance_details = TRUE) {
       bootstrap_conf_high = ci_upper
     )
 
-  # 3. EXTRACT BALANCE STATISTICS
+  # 3. EXTRACT BALANCE STATISTICS (unchanged)
   balance_data <- cbps_results$balance
 
   # Extract balance table as dataframe
@@ -106,11 +106,10 @@ extract_cbps_results <- function(cbps_results, include_balance_details = TRUE) {
         sample_size = cbps_results$sample_sizes$final
       )
 
-    # Clean up column names (they vary depending on WeightIt version)
+    # Clean up column names (unchanged)
     balance_names <- names(balance_df)
     new_names <- balance_names
 
-    # Standard renaming patterns for balance table structure
     if ("Diff.Un" %in% balance_names) new_names[new_names == "Diff.Un"] <- "diff_unadj"
     if ("Diff.Adj" %in% balance_names) new_names[new_names == "Diff.Adj"] <- "diff_adj"
     if ("Diff.Target.Adj" %in% balance_names) new_names[new_names == "Diff.Target.Adj"] <- "diff_adj"
@@ -126,7 +125,6 @@ extract_cbps_results <- function(cbps_results, include_balance_details = TRUE) {
     names(balance_df) <- new_names
 
   } else {
-    # Fallback if balance structure is different
     balance_df <- tibble(
       variable = "Balance data not available",
       analysis_type = "Balance",
@@ -134,8 +132,7 @@ extract_cbps_results <- function(cbps_results, include_balance_details = TRUE) {
     )
   }
 
-  # 4. COMBINE ALL RESULTS
-  # Join model and bootstrap results
+  # 4. COMBINE ALL RESULTS (unchanged)
   combined_estimates <- model_summary %>%
     full_join(bootstrap_results, by = c("variable", "sample_size")) %>%
     mutate(analysis_type = "Combined")
@@ -154,7 +151,6 @@ extract_cbps_results <- function(cbps_results, include_balance_details = TRUE) {
           cbps_results$sample_sizes$initial - cbps_results$sample_sizes$final
         )
       ),
-      # Summary statistics
       summary_stats = tibble(
         metric = c(
           "max_abs_std_diff_before",
@@ -170,7 +166,24 @@ extract_cbps_results <- function(cbps_results, include_balance_details = TRUE) {
           if ("diff_unadj" %in% names(balance_df)) mean(abs(balance_df$diff_unadj), na.rm = TRUE) else NA,
           if ("diff_adj" %in% names(balance_df)) mean(abs(balance_df$diff_adj), na.rm = TRUE) else NA
         )
-      )
+      ),
+      # NEW: Add pooled results if they exist (for MI analysis)
+      pooled_estimates = if (!is.null(cbps_results$pooled_results)) {
+        cbps_results$pooled_results %>%
+          rename(
+            variable = term,
+            pooled_estimate = estimate,
+            pooled_se = se,
+            pooled_statistic = statistic,
+            pooled_p_value = p.value,
+            pooled_conf_low = ci_lower,
+            pooled_conf_high = ci_upper,
+            pooled_df = df,
+            pooled_fmi = fmi
+          )
+      } else {
+        NULL
+      }
     )
   } else {
     # Simple version - just estimates and basic info
@@ -186,36 +199,7 @@ extract_cbps_results <- function(cbps_results, include_balance_details = TRUE) {
 }
 
 
-#' Quick Results Summary for Visualization
-#'
-#' Creates a simplified summary of CBPS results optimized for visualization.
-#'
-#' @param cbps_results List. Output from \code{\link{cbps_weighted_analysis}}
-#'
-#' @return A data frame with key estimates and confidence intervals, ready for plotting
-#'
-#' @details
-#' This is a convenience function that extracts only the essential columns needed
-#' for creating plots and quick summaries. It's equivalent to calling
-#' \code{extract_cbps_results()} with \code{include_balance_details = FALSE} and
-#' selecting key columns.
-#'
-#' @examples
-#' \dontrun{
-#' # Quick visualization-ready data
-#' viz_data <- quick_results_summary(results)
-#'
-#' # Create a simple plot
-#' library(ggplot2)
-#' viz_data %>%
-#'   filter(variable != "(Intercept)") %>%
-#'   ggplot(aes(x = variable, y = glm_estimate)) +
-#'   geom_point() +
-#'   geom_errorbar(aes(ymin = glm_conf_low, ymax = glm_conf_high))
-#' }
-#'
-#' @seealso \code{\link{extract_cbps_results}}
-#' @export
+#' Quick Results Summary for Visualization (UNCHANGED)
 quick_results_summary <- function(cbps_results) {
   result <- extract_cbps_results(cbps_results, include_balance_details = FALSE)
 

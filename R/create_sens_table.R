@@ -160,8 +160,11 @@ create_sens_table <- function(sig_results,
       } else {
         NA
       },
-      sample_size_col = if ("sample_size" %in% names(.)) {
+      # Get sample size - handle both sample_size and final_sample_size columns
+      sample_size_col = if("sample_size" %in% names(.)) {
         ifelse(!is.na(.data$sample_size), .data$sample_size, "")
+      } else if("final_sample_size" %in% names(.)) {
+        ifelse(!is.na(.data$final_sample_size), .data$final_sample_size, "")
       } else {
         "N/A"
       },

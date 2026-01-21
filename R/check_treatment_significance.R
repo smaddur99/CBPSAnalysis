@@ -77,6 +77,7 @@ check_treatment_significance <- function(
     include_bootstrap = TRUE,
     exclude_intercept = TRUE,
     focus_on_treatment_only = TRUE,
+    use_pooled = TRUE,
     verbose = TRUE
 ) {
 
@@ -109,78 +110,289 @@ check_treatment_significance <- function(
 
     if (verbose) cat("Processing", model_name, "...\n")
 
+    # Initialize variables first (important for scope!)
+    model_aic <- NA_real_
+    model_bic <- NA_real_
+    model_aicc <- NA_real_
+
     # Extract results using manual extraction
     tryCatch({
-      # Get GLM results
-      glm_summary <- broom::tidy(model_result$model, conf.int = TRUE)
 
-      # Check if confidence intervals were created
-      if (!"conf.low" %in% names(glm_summary)) {
-        glm_summary$conf.low <- NA_real_
-        glm_summary$conf.high <- NA_real_
-        if (verbose) cat("  Warning: No confidence intervals available for", model_name, "\n")
-      }
+      # Check if input is from extract_cbps_results() or raw CBPS output
+      if ("estimates" %in% names(model_result)) {
+        # Input from extract_cbps_results() with include_balance_details = TRUE
+        if (verbose) cat("  Using extracted CBPS results format\n")
 
-      # Extract model fit statistics (AIC, BIC, BICc)
-      # Initialize variables first (important for scope!)
-      model_aic <- NA_real_
-      model_bic <- NA_real_
-      model_aicc <- NA_real_
+        # Start with the estimates dataframe
+        model_data <- model_result$estimates
 
-      tryCatch({
-        model_aic <- AIC(model_result$model)
-        model_bic <- BIC(model_result$model)
-
-        # Calculate BICc (corrected BIC for small samples)
-        n_obs <- nobs(model_result$model)
-        k_params <- length(coef(model_result$model))
-
-        # BICc uses AICc formula: AIC + (2*k*(k+1))/(n-k-1)
-        model_aicc <- model_aic + (2 * k_params * (k_params + 1)) / (n_obs - k_params - 1)
-
-        if (verbose) {
-          cat("  Model fit statistics: AIC =", round(model_aic, 2),
-              ", BIC =", round(model_bic, 2),
-              ", BICc =", round(model_aicc, 2), "\n")
+        # Extract sample size from sample_sizes tibble if available
+        if ("sample_sizes" %in% names(model_result)) {
+          final_n <- model_result$sample_sizes %>%
+            filter(metric == "final_n") %>%
+            pull(value)
+          model_data$sample_size <- final_n
         }
 
-      }, error = function(e) {
-        if (verbose) cat("  Warning: Could not calculate AIC/BIC for", model_name, ":", e$message, "\n")
-      })
+        # Extract balance statistics from summary_stats if available
+        if ("summary_stats" %in% names(model_result)) {
+          max_std_diff <- model_result$summary_stats %>%
+            filter(metric == "max_abs_std_diff_after") %>%
+            pull(value)
+          mean_std_diff <- model_result$summary_stats %>%
+            filter(metric == "mean_absolute_std_diff_after") %>%
+            pull(value)
+          n_balanced <- model_result$summary_stats %>%
+            filter(metric == "n_variables_balanced") %>%
+            pull(value)
 
-      # Get bootstrap results
-      bootstrap_summary <- model_result$bootstrap_summary
+          # Get total number of variables from balance data
+          if ("balance" %in% names(model_result)) {
+            n_total <- nrow(model_result$balance)
+          } else {
+            n_total <- NA_real_
+          }
 
-      # Combine results
-      model_data <- glm_summary %>%
-        dplyr::rename(
-          variable = term,
-          glm_estimate = estimate,
-          glm_se = std.error,
-          glm_statistic = statistic,
-          glm_p_value = p.value,
-          glm_conf_low = conf.low,
-          glm_conf_high = conf.high
-        ) %>%
-        dplyr::left_join(
-          bootstrap_summary %>%
-            dplyr::rename(
-              variable = term,
-              bootstrap_estimate = estimate,
-              bootstrap_se = se,
-              bootstrap_conf_low = ci_lower,
-              bootstrap_conf_high = ci_upper
-            ),
-          by = "variable"
-        ) %>%
-        dplyr::mutate(
-          model_name = model_name,
-          sample_size = model_result$sample_sizes$final,
-          analysis_type = "Combined",
-          AIC = model_aic,
-          BIC = model_bic,
-          BICc = model_aicc
-        )
+          model_data$max_std_diff <- max_std_diff
+          model_data$mean_std_diff <- mean_std_diff
+          model_data$n_balanced_vars <- n_balanced
+          model_data$n_total_vars <- n_total
+        } else {
+          model_data$max_std_diff <- NA_real_
+          model_data$mean_std_diff <- NA_real_
+          model_data$n_balanced_vars <- NA_real_
+          model_data$n_total_vars <- NA_real_
+        }
+
+        # Check for pooled results (MI analysis)
+        if (!is.null(model_result$pooled_estimates) && use_pooled) {
+          if (verbose) cat("  Using Rubin's rules pooled results\n")
+
+          # Replace GLM estimates with pooled estimates where available
+          pooled_data <- model_result$pooled_estimates
+
+          model_data <- model_data %>%
+            left_join(
+              pooled_data %>%
+                select(variable, pooled_estimate, pooled_se, pooled_statistic,
+                       pooled_p_value, pooled_conf_low, pooled_conf_high,
+                       pooled_df, pooled_fmi),
+              by = "variable"
+            ) %>%
+            mutate(
+              # Use pooled results for inference when available
+              glm_estimate = ifelse(!is.na(pooled_estimate), pooled_estimate, glm_estimate),
+              glm_se = ifelse(!is.na(pooled_se), pooled_se, glm_se),
+              glm_statistic = ifelse(!is.na(pooled_statistic), pooled_statistic, glm_statistic),
+              glm_p_value = ifelse(!is.na(pooled_p_value), pooled_p_value, glm_p_value),
+              glm_conf_low = ifelse(!is.na(pooled_conf_low), pooled_conf_low, glm_conf_low),
+              glm_conf_high = ifelse(!is.na(pooled_conf_high), pooled_conf_high, glm_conf_high),
+              fmi = pooled_fmi,
+              df_adjusted = pooled_df,
+              inference_method = ifelse(!is.na(pooled_estimate), "Rubin's Rules (MI)", "Single Imputation")
+            ) %>%
+            select(-c(pooled_estimate, pooled_se, pooled_statistic, pooled_p_value,
+                      pooled_conf_low, pooled_conf_high, pooled_df, pooled_fmi))
+        } else {
+          model_data <- model_data %>%
+            mutate(
+              inference_method = "Single Imputation",
+              fmi = NA_real_,
+              df_adjusted = NA_real_
+            )
+        }
+
+        # Add model information
+        model_data <- model_data %>%
+          mutate(
+            model_name = model_name,
+            AIC = NA_real_,  # Not available from extracted results
+            BIC = NA_real_,
+            BICc = NA_real_,
+            n_imputations = if(!is.null(model_result$pooled_estimates)) {
+              # Infer from pooled results presence
+              5  # Default assumption
+            } else {
+              1
+            }
+          )
+
+      } else {
+        # Original format: raw CBPS results
+        if (verbose) cat("  Using raw CBPS results format\n")
+
+        # Check if pooled results exist and should be used
+        use_pooled_for_model <- use_pooled && !is.null(model_result$pooled_results)
+
+        if (use_pooled_for_model) {
+          # USE POOLED RESULTS (Rubin's rules)
+          if (verbose) cat("  Using Rubin's rules pooled results\n")
+
+          glm_summary <- model_result$pooled_results %>%
+            rename(
+              term = term,
+              estimate = estimate,
+              std.error = se,
+              statistic = statistic,
+              p.value = p.value,
+              conf.low = ci_lower,
+              conf.high = ci_upper
+            ) %>%
+            mutate(
+              inference_method = "Rubin's Rules (MI)",
+              fmi = fmi,
+              df_adjusted = df
+            )
+
+        } else {
+          # USE SINGLE IMPUTATION (backward compatible)
+          if (verbose && !is.null(model_result$pooled_results)) {
+            cat("  Using single imputation results (use_pooled=FALSE)\n")
+          }
+
+          glm_summary <- broom::tidy(model_result$model, conf.int = TRUE) %>%
+            mutate(
+              inference_method = "Single Imputation",
+              fmi = NA_real_,
+              df_adjusted = NA_real_
+            )
+        }
+
+        # Check if confidence intervals were created
+        if (!"conf.low" %in% names(glm_summary)) {
+          glm_summary$conf.low <- NA_real_
+          glm_summary$conf.high <- NA_real_
+          if (verbose) cat("  Warning: No confidence intervals available for", model_name, "\n")
+        }
+
+        # Extract model fit statistics (AIC, BIC, BICc)
+        tryCatch({
+          model_aic <- AIC(model_result$model)
+          model_bic <- BIC(model_result$model)
+
+          # Calculate BICc (corrected BIC for small samples)
+          n_obs <- nobs(model_result$model)
+          k_params <- length(coef(model_result$model))
+
+          model_aicc <- model_aic + (2 * k_params * (k_params + 1)) / (n_obs - k_params - 1)
+
+          if (verbose) {
+            cat("  Model fit statistics: AIC =", round(model_aic, 2),
+                ", BIC =", round(model_bic, 2),
+                ", BICc =", round(model_aicc, 2), "\n")
+          }
+
+        }, error = function(e) {
+          if (verbose) cat("  Warning: Could not calculate AIC/BIC for", model_name, ":", e$message, "\n")
+        })
+
+        # Get bootstrap results
+        bootstrap_summary <- model_result$bootstrap_summary
+
+        # Combine results
+        model_data <- glm_summary %>%
+          dplyr::rename(
+            variable = term,
+            glm_estimate = estimate,
+            glm_se = std.error,
+            glm_statistic = statistic,
+            glm_p_value = p.value,
+            glm_conf_low = conf.low,
+            glm_conf_high = conf.high
+          ) %>%
+          dplyr::left_join(
+            bootstrap_summary %>%
+              dplyr::rename(
+                variable = term,
+                bootstrap_estimate = estimate,
+                bootstrap_se = se,
+                bootstrap_conf_low = ci_lower,
+                bootstrap_conf_high = ci_upper
+              ),
+            by = "variable"
+          ) %>%
+          dplyr::mutate(
+            model_name = model_name,
+            sample_size = model_result$sample_sizes$final,
+            analysis_type = "Combined",
+            AIC = model_aic,
+            BIC = model_bic,
+            BICc = model_aicc,
+            n_imputations = if (!is.null(model_result$n_imputations)) model_result$n_imputations else 1,
+            inference_method = first(inference_method)
+          )
+
+        # Initialize balance columns
+        model_data$max_std_diff <- NA_real_
+        model_data$mean_std_diff <- NA_real_
+        model_data$n_balanced_vars <- NA_real_
+        model_data$n_total_vars <- NA_real_
+
+        # Extract overall balance statistics for the model
+        if (!is.null(model_result$balance_summary) && use_pooled_for_model) {
+          # Use average balance across imputations
+          balance_sum <- model_result$balance_summary
+
+          if (nrow(balance_sum) > 0) {
+            max_std_diff <- mean(balance_sum$max_abs_std_diff, na.rm = TRUE)
+            mean_std_diff <- mean(balance_sum$mean_abs_std_diff, na.rm = TRUE)
+            n_balanced <- sum(balance_sum$n_above_threshold == 0, na.rm = TRUE)
+            n_total <- nrow(balance_sum)
+
+            model_data$max_std_diff <- max_std_diff
+            model_data$mean_std_diff <- mean_std_diff
+            model_data$n_balanced_vars <- n_balanced
+            model_data$n_total_vars <- n_total
+
+            if (verbose) {
+              cat("    Balance summary (avg across imputations): Max |std diff| =", round(max_std_diff, 3),
+                  ", Mean |std diff| =", round(mean_std_diff, 3), "\n")
+            }
+          }
+
+        } else if ("balance" %in% names(model_result) && "Balance" %in% names(model_result$balance)) {
+          # Use single imputation balance
+          balance_df <- as.data.frame(model_result$balance$Balance)
+
+          # Check for standardized difference column
+          std_diff_col <- NULL
+          if ("Diff.Adj" %in% names(balance_df)) {
+            std_diff_col <- "Diff.Adj"
+          } else if ("Diff.Target.Adj" %in% names(balance_df)) {
+            std_diff_col <- "Diff.Target.Adj"
+          }
+
+          if (!is.null(std_diff_col) && nrow(balance_df) > 0) {
+            # Calculate overall balance metrics
+            std_diffs <- balance_df[[std_diff_col]]
+            std_diffs <- std_diffs[!is.na(std_diffs)]
+
+            if (length(std_diffs) > 0) {
+              max_std_diff <- max(abs(std_diffs))
+              mean_std_diff <- mean(abs(std_diffs))
+              n_balanced <- sum(abs(std_diffs) < 0.1)
+              n_total <- length(std_diffs)
+
+              model_data$max_std_diff <- max_std_diff
+              model_data$mean_std_diff <- mean_std_diff
+              model_data$n_balanced_vars <- n_balanced
+              model_data$n_total_vars <- n_total
+
+              if (verbose) {
+                cat("    Balance summary: Max |std diff| =", round(max_std_diff, 3),
+                    ", Mean |std diff| =", round(mean_std_diff, 3), "\n")
+                cat("    Variables balanced (<0.1):", n_balanced, "out of", n_total, "\n")
+              }
+            } else {
+              if (verbose) cat("    No valid standardized differences found\n")
+            }
+          } else {
+            if (verbose) cat("    Standardized difference column not found in balance table\n")
+          }
+        } else {
+          if (verbose) cat("    No balance table available for this model\n")
+        }
+      }
 
       # Filter out intercept if requested
       if (exclude_intercept) {
@@ -197,56 +409,6 @@ check_treatment_significance <- function(
         dplyr::mutate(
           variable_type = "Primary Treatment"
         )
-
-      # Initialize balance columns
-      model_data$max_std_diff <- NA_real_
-      model_data$mean_std_diff <- NA_real_
-      model_data$n_balanced_vars <- NA_real_
-      model_data$n_total_vars <- NA_real_
-
-      # Extract overall balance statistics for the model
-      if ("balance" %in% names(model_result) && "Balance" %in% names(model_result$balance)) {
-        balance_df <- as.data.frame(model_result$balance$Balance)
-
-        # Check for standardized difference column
-        std_diff_col <- NULL
-        if ("Diff.Adj" %in% names(balance_df)) {
-          std_diff_col <- "Diff.Adj"
-        } else if ("Diff.Target.Adj" %in% names(balance_df)) {
-          std_diff_col <- "Diff.Target.Adj"
-        }
-
-        if (!is.null(std_diff_col) && nrow(balance_df) > 0) {
-          # Calculate overall balance metrics
-          std_diffs <- balance_df[[std_diff_col]]
-          std_diffs <- std_diffs[!is.na(std_diffs)]
-
-          if (length(std_diffs) > 0) {
-            max_std_diff <- max(abs(std_diffs))
-            mean_std_diff <- mean(abs(std_diffs))
-            n_balanced <- sum(abs(std_diffs) < 0.1)  # Standard threshold
-            n_total <- length(std_diffs)
-
-            # Add these summary statistics to all rows for this model
-            model_data$max_std_diff <- max_std_diff
-            model_data$mean_std_diff <- mean_std_diff
-            model_data$n_balanced_vars <- n_balanced
-            model_data$n_total_vars <- n_total
-
-            if (verbose) {
-              cat("    Balance summary: Max |std diff| =", round(max_std_diff, 3),
-                  ", Mean |std diff| =", round(mean_std_diff, 3), "\n")
-              cat("    Variables balanced (<0.1):", n_balanced, "out of", n_total, "\n")
-            }
-          } else {
-            if (verbose) cat("    No valid standardized differences found\n")
-          }
-        } else {
-          if (verbose) cat("    Standardized difference column not found in balance table\n")
-        }
-      } else {
-        if (verbose) cat("    No balance table available for this model\n")
-      }
 
       all_results[[i]] <- model_data
 
@@ -293,6 +455,9 @@ check_treatment_significance <- function(
       AIC = first(AIC),
       BIC = first(BIC),
       BICc = first(BICc),
+      # Add MI info
+      n_imputations = first(n_imputations),
+      inference_method = first(inference_method),
       .groups = "drop"
     )
 
@@ -339,6 +504,11 @@ check_treatment_significance <- function(
     base_columns <- c(base_columns, "sample_size")
   }
 
+  # Add MI-specific columns if they exist
+  mi_columns <- c("n_imputations", "inference_method", "fmi", "df_adjusted")
+  existing_mi <- mi_columns[mi_columns %in% names(sig_details)]
+  base_columns <- c(base_columns, existing_mi)
+
   # Add balance statistics if they exist
   balance_columns <- c("max_std_diff", "mean_std_diff", "n_balanced_vars", "n_total_vars")
   existing_balance <- balance_columns[balance_columns %in% names(sig_details)]
@@ -365,7 +535,11 @@ check_treatment_significance <- function(
   # Print summary if verbose
   if (verbose) {
     cat("\n=== TREATMENT SIGNIFICANCE SUMMARY ===\n")
-    cat(paste("Primary treatment variable:", primary_treatment, "\n\n"))
+    cat(paste("Primary treatment variable:", primary_treatment, "\n"))
+
+    # Show inference method being used
+    inference_methods <- unique(combined_results$inference_method)
+    cat(paste("Inference method:", paste(inference_methods, collapse = ", "), "\n\n"))
 
     # Treatment significance summary
     cat("Treatment Significance Across Models:\n")
@@ -375,7 +549,10 @@ check_treatment_significance <- function(
 
     for (i in 1:nrow(treatment_summary)) {
       status <- if (treatment_summary$primary_treatment_significant[i]) "yes" else "no"
-      cat(status, " ", treatment_summary$model_name[i], ": p = ",
+      mi_info <- if (treatment_summary$n_imputations[i] > 1)
+        paste0(" (", treatment_summary$n_imputations[i], " imputations)") else ""
+
+      cat(status, " ", treatment_summary$model_name[i], mi_info, ": p = ",
           round(treatment_summary$primary_treatment_p_value[i], 4),
           ", effect = ", round(treatment_summary$primary_treatment_estimate[i], 4), "\n")
     }
@@ -438,6 +615,11 @@ check_treatment_significance <- function(
       cat("  Model:", best_result$model_name[1], "\n")
       cat("  P-value:", round(best_result$primary_treatment_p_value[1], 4), "\n")
       cat("  Effect size:", round(best_result$primary_treatment_estimate[1], 4), "\n")
+
+      # Show if using MI
+      if (best_result$n_imputations[1] > 1) {
+        cat("  Multiple imputations:", best_result$n_imputations[1], "\n")
+      }
     }
   }
 
@@ -454,36 +636,9 @@ check_treatment_significance <- function(
 
 
 #' Quick Significance Check
-#'
-#' Performs a quick significance check focusing on the primary treatment variable.
-#'
-#' @param model_results_list List of CBPS analysis results or a single result object
-#' @param model_names Character vector of model names (optional)
-#' @param alpha Numeric. Alpha level for significance (default: 0.05)
-#' @param primary_treatment Character. Name of primary treatment variable
-#' @param focus_on_treatment_only Logical. Whether to show only treatment effects (default: TRUE)
-#'
-#' @return A data frame with summary results for each model
-#'
-#' @details
-#' This is a convenience function for quickly checking which models show significant
-#' treatment effects. It provides less detailed output than \code{\link{check_treatment_significance}}
-#' but is useful for rapid model comparison.
-#'
-#' @examples
-#' \dontrun{
-#' # Quick check across models
-#' quick_sig_check(
-#'   model_results_list = list(model1, model2),
-#'   model_names = c("Model 1", "Model 2"),
-#'   primary_treatment = "treatment"
-#' )
-#' }
-#'
-#' @seealso \code{\link{check_treatment_significance}}
-#' @export
 quick_sig_check <- function(model_results_list, model_names = NULL, alpha = 0.05,
-                            primary_treatment = "treatment", focus_on_treatment_only = TRUE) {
+                            primary_treatment = "treatment", focus_on_treatment_only = TRUE,
+                            use_pooled = TRUE) {
 
   results <- check_treatment_significance(
     model_results_list = model_results_list,
@@ -491,6 +646,7 @@ quick_sig_check <- function(model_results_list, model_names = NULL, alpha = 0.05
     primary_treatment = primary_treatment,
     alpha_levels = alpha,
     focus_on_treatment_only = focus_on_treatment_only,
+    use_pooled = use_pooled,
     verbose = FALSE
   )
 
@@ -500,7 +656,7 @@ quick_sig_check <- function(model_results_list, model_names = NULL, alpha = 0.05
 
     if (nrow(sig_models) > 0) {
       cat("Models with significant", primary_treatment, "effects (p <", alpha, "):\n")
-      print(sig_models %>% dplyr::select(model_name, primary_treatment_p_value, primary_treatment_estimate, sample_size, AIC, BIC, BICc))
+      print(sig_models %>% dplyr::select(model_name, primary_treatment_p_value, primary_treatment_estimate, sample_size, n_imputations, AIC, BIC, BICc))
     } else {
       cat("No models with significant", primary_treatment, "effects at p <", alpha, "\n")
     }
@@ -508,7 +664,7 @@ quick_sig_check <- function(model_results_list, model_names = NULL, alpha = 0.05
     # Show all treatment results
     all_models <- results$summary_table
     cat("Primary treatment results for all models:\n")
-    print(all_models %>% dplyr::select(model_name, primary_treatment_p_value, primary_treatment_estimate, sample_size, AIC, BIC, BICc))
+    print(all_models %>% dplyr::select(model_name, primary_treatment_p_value, primary_treatment_estimate, sample_size, n_imputations, AIC, BIC, BICc))
   }
 
   return(results$summary_table)

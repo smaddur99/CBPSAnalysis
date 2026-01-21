@@ -72,6 +72,7 @@ create_significance_table <- function(
     model_labels = NULL,
     include_bootstrap = TRUE,
     include_fit_stats = TRUE,
+    include_mi_info = TRUE,  # NEW: Show MI-specific info
     decimal_places = 3,
     font_size = 16,
     font_family = "Times New Roman",
@@ -81,7 +82,6 @@ create_significance_table <- function(
 ) {
 
   # Since this is part of a package, dependencies should already be available
-  # Just check that required packages are accessible
   required_packages <- c("dplyr", "gt", "tibble")
   missing_packages <- required_packages[!sapply(required_packages, requireNamespace, quietly = TRUE)]
 
@@ -114,7 +114,7 @@ create_significance_table <- function(
 
   # Create pretty treatment label
   if (is.null(treatment_label)) {
-    treatment_label <- unique(table_data$variable)[1]  # Use the first (should be only) variable name
+    treatment_label <- unique(table_data$variable)[1]
   }
 
   # Create pretty model names
@@ -152,11 +152,31 @@ create_significance_table <- function(
         NA
       },
 
-      # Get sample size (with safety check for missing column)
+      # Get sample size - handle both sample_size and final_sample_size columns
       sample_size_col = if("sample_size" %in% names(.)) {
         ifelse(!is.na(.data$sample_size), .data$sample_size, "")
+      } else if("final_sample_size" %in% names(.)) {
+        ifelse(!is.na(.data$final_sample_size), .data$final_sample_size, "")
       } else {
         "N/A"
+      },
+
+      # NEW: Format MI info if available
+      mi_info = if(include_mi_info && "n_imputations" %in% names(.) && "inference_method" %in% names(.)) {
+        ifelse(.data$n_imputations > 1,
+               paste0("MI (m=", .data$n_imputations, ")"),
+               "Single")
+      } else {
+        NA
+      },
+
+      # NEW: Format FMI if available
+      fmi_formatted = if(include_mi_info && "fmi" %in% names(.)) {
+        ifelse(!is.na(.data$fmi),
+               sprintf(paste0("%.", decimal_places, "f"), .data$fmi),
+               NA)
+      } else {
+        NA
       },
 
       # Create balance ratio (as fraction for easy interpretation)
@@ -182,7 +202,7 @@ create_significance_table <- function(
       # Format p-value with significance stars
       p_value_formatted = paste0(sprintf(paste0("%.", decimal_places, "f"), glm_p_value), sig_symbol)
     ) %>%
-    dplyr::arrange(glm_p_value) %>%  # Sort by significance (most significant first)
+    dplyr::arrange(glm_p_value) %>%
     dplyr::mutate(
       row_id = row_number()
     )
@@ -203,6 +223,14 @@ create_significance_table <- function(
       "is_significant"
     )
 
+    # NEW: Add MI info columns if they exist and aren't all NA
+    if (include_mi_info && "mi_info" %in% names(formatted_data) && !all(is.na(formatted_data$mi_info))) {
+      base_select <- c(base_select, "mi_info")
+    }
+    if (include_mi_info && "fmi_formatted" %in% names(formatted_data) && !all(is.na(formatted_data$fmi_formatted))) {
+      base_select <- c(base_select, "fmi_formatted")
+    }
+
     # Add fit stats if requested and available
     if (include_fit_stats && all(c("AIC", "BIC", "BICc") %in% names(formatted_data))) {
       base_select <- c(base_select, "AIC", "BIC", "BICc")
@@ -221,6 +249,14 @@ create_significance_table <- function(
       balance_ratio = "Covariates Balanced",
       sample_size_col = "N"
     )
+
+    # NEW: Add MI column labels if present
+    if ("mi_info" %in% names(table_final)) {
+      col_labels$mi_info <- "Method"
+    }
+    if ("fmi_formatted" %in% names(table_final)) {
+      col_labels$fmi_formatted <- "FMI"
+    }
 
     if (include_fit_stats && "AIC" %in% names(table_final)) {
       col_labels$AIC <- "AIC"
@@ -241,6 +277,14 @@ create_significance_table <- function(
       "is_significant"
     )
 
+    # NEW: Add MI info columns if they exist and aren't all NA
+    if (include_mi_info && "mi_info" %in% names(formatted_data) && !all(is.na(formatted_data$mi_info))) {
+      base_select <- c(base_select, "mi_info")
+    }
+    if (include_mi_info && "fmi_formatted" %in% names(formatted_data) && !all(is.na(formatted_data$fmi_formatted))) {
+      base_select <- c(base_select, "fmi_formatted")
+    }
+
     # Add fit stats if requested and available
     if (include_fit_stats && all(c("AIC", "BIC", "BICc") %in% names(formatted_data))) {
       base_select <- c(base_select, "AIC", "BIC", "BICc")
@@ -257,6 +301,14 @@ create_significance_table <- function(
       balance_ratio = "Covariates Balanced",
       sample_size_col = "N"
     )
+
+    # NEW: Add MI column labels if present
+    if ("mi_info" %in% names(table_final)) {
+      col_labels$mi_info <- "Method"
+    }
+    if ("fmi_formatted" %in% names(table_final)) {
+      col_labels$fmi_formatted <- "FMI"
+    }
 
     if (include_fit_stats && "AIC" %in% names(table_final)) {
       col_labels$AIC <- "AIC"
@@ -314,7 +366,7 @@ create_significance_table <- function(
     # Highlight significant results with light blue
     gt::tab_style(
       style = list(
-        gt::cell_fill(color = "#e3f2fd"),  # Light blue instead of green
+        gt::cell_fill(color = "#e3f2fd"),
         gt::cell_text(weight = "bold")
       ),
       locations = gt::cells_body(rows = table_final$row_id[table_final$is_significant])
@@ -349,6 +401,16 @@ create_significance_table <- function(
     gt::cols_align(align = "center", columns = c("sample_size_col", "balance_ratio", "p_value_formatted")) %>%
     gt::cols_align(align = "right", columns = contains("estimate"))
 
+  # NEW: Align MI columns to center if present
+  if ("mi_info" %in% names(table_final)) {
+    gt_table <- gt_table %>%
+      gt::cols_align(align = "center", columns = "mi_info")
+  }
+  if ("fmi_formatted" %in% names(table_final)) {
+    gt_table <- gt_table %>%
+      gt::cols_align(align = "center", columns = "fmi_formatted")
+  }
+
   # Align fit statistics to center if present
   if (include_fit_stats && "AIC" %in% names(table_final)) {
     gt_table <- gt_table %>%
@@ -358,8 +420,6 @@ create_significance_table <- function(
   gt_table <- gt_table %>%
     # Hide utility columns
     gt::cols_hide(columns = c("row_id", "is_significant"))
-
-  # NO FOOTNOTES - Clean and simple table
 
   # Save if filename provided
   if (!is.null(filename)) {
@@ -374,6 +434,14 @@ create_significance_table <- function(
   cat("  Total models:", total_count, "\n")
   cat("  Significant models (p <", alpha_threshold, "):", sig_count, "\n")
   cat("  Treatment variable:", treatment_label, "\n")
+
+  # NEW: Show MI info in summary
+  if ("mi_info" %in% names(table_final)) {
+    mi_models <- sum(grepl("MI", table_final$mi_info, ignore.case = TRUE))
+    if (mi_models > 0) {
+      cat("  Models using multiple imputation:", mi_models, "\n")
+    }
+  }
 
   if (include_fit_stats && "AIC" %in% names(table_final)) {
     best_aic <- table_final %>% dplyr::slice_min(AIC, n = 1)

@@ -112,11 +112,15 @@ create_balance_table_grouped <- function(
       balance_data$model <- "Model"
     }
 
+    if (!"model_order" %in% names(balance_data)) {
+      balance_data$model_order <- 1
+    }
+
   } else if (is.list(balance_results)) {
 
     if ("balance" %in% names(balance_results) &&
         "estimates" %in% names(balance_results)) {
-      # Single model result
+      # Single model from extract_cbps_results()
       balance_data <- balance_results$balance %>%
         dplyr::mutate(
           model = "Model",
@@ -132,11 +136,37 @@ create_balance_table_grouped <- function(
 
       for (model_name in names(balance_results)) {
         model_data <- balance_results[[model_name]]
-        if ("balance" %in% names(model_data)) {
+
+        # Check if this is extracted results format
+        if ("balance" %in% names(model_data) && "estimates" %in% names(model_data)) {
+          # From extract_cbps_results()
           temp_df <- model_data$balance %>%
             dplyr::mutate(
               model = model_name,
-              model_order = model_order_map[model_name],  # Preserve list order
+              model_order = model_order_map[model_name],
+              mean_balance = abs(.data$diff_adj),
+              variance_balance = if ("var_ratio_adj" %in% names(.))
+                .data$var_ratio_adj else NA
+            )
+          balance_list[[model_name]] <- temp_df
+        } else if ("balance" %in% names(model_data) && "Balance" %in% names(model_data$balance)) {
+          # Raw CBPS output format
+          temp_df <- as.data.frame(model_data$balance$Balance) %>%
+            tibble::rownames_to_column("variable") %>%
+            dplyr::mutate(
+              model = model_name,
+              model_order = model_order_map[model_name],
+              diff_adj = if("Diff.Adj" %in% names(.)) .data$Diff.Adj else if("Diff.Target.Adj" %in% names(.)) .data$Diff.Target.Adj else NA,
+              mean_balance = abs(.data$diff_adj),
+              variance_balance = if("V.Ratio.Adj" %in% names(.)) .data$V.Ratio.Adj else NA
+            )
+          balance_list[[model_name]] <- temp_df
+        } else if ("balance" %in% names(model_data)) {
+          # Already a dataframe with balance data
+          temp_df <- model_data$balance %>%
+            dplyr::mutate(
+              model = model_name,
+              model_order = model_order_map[model_name],
               mean_balance = abs(.data$diff_adj),
               variance_balance = if ("var_ratio_adj" %in% names(.))
                 .data$var_ratio_adj else NA
@@ -153,7 +183,7 @@ create_balance_table_grouped <- function(
     }
 
   } else {
-    stop("balance_results must be a data frame or list output from extract_cbps_results()")
+    stop("balance_results must be a data frame or list output from extract_cbps_results() or npcbps_weighted_analysis()")
   }
 
   # Check if we have variance data

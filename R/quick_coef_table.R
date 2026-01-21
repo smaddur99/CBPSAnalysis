@@ -45,21 +45,47 @@ quick_coef_table <- function(model,
                              sig_only = FALSE,
                              alpha = 0.05) {
 
-  # Check if input is a list (from cbps/npcbps analysis functions)
-  if (is.list(model) && "model" %in% names(model)) {
+  # Check if input is from extract_cbps_results()
+  if (is.list(model) && "estimates" %in% names(model)) {
+    # Input from extract_cbps_results() - use estimates dataframe
+    estimates_df <- model$estimates
+
+    # Create result dataframe from estimates
+    result <- data.frame(
+      variable = estimates_df$variable,
+      b_value = round(estimates_df$glm_estimate, digits),
+      p_value = round(estimates_df$glm_p_value, digits),
+      stringsAsFactors = FALSE
+    )
+
+  } else if (is.list(model) && "model" %in% names(model)) {
+    # Input from cbps/npcbps analysis functions - extract model
     model <- model$model
+
+    # Extract coefficient summary
+    coef_summary <- summary(model)$coefficients
+
+    # Create simple data frame
+    result <- data.frame(
+      variable = rownames(coef_summary),
+      b_value = round(coef_summary[, "Estimate"], digits),
+      p_value = round(coef_summary[, "Pr(>|t|)"], digits),
+      stringsAsFactors = FALSE
+    )
+
+  } else {
+    # Direct model object
+    # Extract coefficient summary
+    coef_summary <- summary(model)$coefficients
+
+    # Create simple data frame
+    result <- data.frame(
+      variable = rownames(coef_summary),
+      b_value = round(coef_summary[, "Estimate"], digits),
+      p_value = round(coef_summary[, "Pr(>|t|)"], digits),
+      stringsAsFactors = FALSE
+    )
   }
-
-  # Extract coefficient summary
-  coef_summary <- summary(model)$coefficients
-
-  # Create simple data frame
-  result <- data.frame(
-    variable = rownames(coef_summary),
-    b_value = round(coef_summary[, "Estimate"], digits),
-    p_value = round(coef_summary[, "Pr(>|t|)"], digits),
-    stringsAsFactors = FALSE
-  )
 
   # Add significance markers
   result$sig <- ifelse(result$p_value < 0.001, "***",
@@ -98,7 +124,7 @@ quick_coef_table <- function(model,
 #' This is a convenience wrapper around \code{quick_coef_table} that prints
 #' the results with a header for easier reading during interactive analysis.
 #'
-#' @param model A fitted model object (glm, lm, or similar) OR a list from cbps_weighted_analysis
+#' @param model A fitted model object (glm, lm, or similar) OR a list from cbps_weighted_analysis OR output from extract_cbps_results
 #' @param digits Integer. Number of decimal places to round to (default: 3)
 #' @param include_intercept Logical. Whether to include the intercept term (default: FALSE)
 #' @param sort_by Character. Sort by "none", "pvalue", "b_value", or "abs_b_value" (default: "none")
@@ -112,6 +138,10 @@ quick_coef_table <- function(model,
 #' results <- cbps_weighted_analysis(...)
 #' print_coef_table(results)
 #' print_coef_table(results, sig_only = TRUE)
+#'
+#' # Or with extracted results
+#' extracted <- extract_cbps_results(results)
+#' print_coef_table(extracted)
 #' }
 #'
 #' @export
@@ -153,7 +183,7 @@ print_coef_table <- function(model,
 #' Ultra-short alias for quick_coef_table for even faster interactive use.
 #' Just type \code{qm(model)} to quickly check your model coefficients.
 #'
-#' @param model A fitted model object or CBPS results list
+#' @param model A fitted model object or CBPS results list or extract_cbps_results output
 #' @param ... Additional arguments passed to \code{quick_coef_table}
 #'
 #' @return A data frame with variable names, coefficients, and p-values
@@ -163,6 +193,7 @@ print_coef_table <- function(model,
 #' # Super quick inspection
 #' qm(model)
 #' qm(cbps_results)
+#' qm(extract_cbps_results(cbps_results))
 #'
 #' # With options
 #' qm(model, sig_only = TRUE)

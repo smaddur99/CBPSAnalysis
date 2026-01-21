@@ -115,7 +115,9 @@ create_balance_table <- function(
     }
 
   } else if (is.list(balance_results)) {
+    # Check if input is from extract_cbps_results() with include_balance_details = TRUE
     if ("balance" %in% names(balance_results) && "estimates" %in% names(balance_results)) {
+      # Single model from extract_cbps_results()
       balance_data <- balance_results$balance %>%
         dplyr::mutate(
           model = "Model",
@@ -123,12 +125,35 @@ create_balance_table <- function(
           variance_balance = if("var_ratio_adj" %in% names(.)) .data$var_ratio_adj else NA
         )
     } else {
+      # List of multiple models (either raw CBPS or extracted results)
       balance_list <- list()
 
       for (model_name in names(balance_results)) {
         model_data <- balance_results[[model_name]]
 
-        if ("balance" %in% names(model_data)) {
+        # Check if this is extracted results format
+        if ("balance" %in% names(model_data) && "estimates" %in% names(model_data)) {
+          # From extract_cbps_results()
+          temp_df <- model_data$balance %>%
+            dplyr::mutate(
+              model = model_name,
+              mean_balance = abs(.data$diff_adj),
+              variance_balance = if("var_ratio_adj" %in% names(.)) .data$var_ratio_adj else NA
+            )
+          balance_list[[model_name]] <- temp_df
+        } else if ("balance" %in% names(model_data) && "Balance" %in% names(model_data$balance)) {
+          # Raw CBPS output format
+          temp_df <- as.data.frame(model_data$balance$Balance) %>%
+            tibble::rownames_to_column("variable") %>%
+            dplyr::mutate(
+              model = model_name,
+              diff_adj = if("Diff.Adj" %in% names(.)) .data$Diff.Adj else if("Diff.Target.Adj" %in% names(.)) .data$Diff.Target.Adj else NA,
+              mean_balance = abs(.data$diff_adj),
+              variance_balance = if("V.Ratio.Adj" %in% names(.)) .data$V.Ratio.Adj else NA
+            )
+          balance_list[[model_name]] <- temp_df
+        } else if ("balance" %in% names(model_data)) {
+          # Already a dataframe with balance data
           temp_df <- model_data$balance %>%
             dplyr::mutate(
               model = model_name,
@@ -146,7 +171,7 @@ create_balance_table <- function(
       balance_data <- dplyr::bind_rows(balance_list)
     }
   } else {
-    stop("balance_results must be a data frame or list output from extract_cbps_results()")
+    stop("balance_results must be a data frame or list output from extract_cbps_results() or npcbps_weighted_analysis()")
   }
 
   # NEW: Check if variance_balance is all NA
@@ -190,7 +215,7 @@ create_balance_table <- function(
       dplyr::mutate(pretty_variable = .data$variable)
   }
 
-  # STEP 3.5: Flag poor balance and add asterisk - FIXED VERSION
+  # STEP 3.5: Flag poor balance and add asterisk
   if (has_variance_data) {
     # Evaluate both SMD and VR
     balance_data <- balance_data %>%

@@ -43,6 +43,7 @@ prepare_sens_table_data <- function(
     model_list,
     sens_labels = NULL,
     treatment_var = NULL,
+    use_pooled = TRUE,
     verbose = TRUE
 ) {
 
@@ -72,36 +73,89 @@ prepare_sens_table_data <- function(
   extract_model_info <- function(model_result, sens_type, outcome_name, treat_var) {
 
     tryCatch({
-      # Get GLM summary
-      glm_summary <- summary(model_result$model)
-      coef_table <- glm_summary$coefficients
 
-      # If treatment_var not specified, use the first non-intercept term
-      if (is.null(treat_var)) {
-        available_terms <- rownames(coef_table)[rownames(coef_table) != "(Intercept)"]
-        if (length(available_terms) == 0) {
-          stop("No non-intercept coefficients found in model")
+      # Check if pooled results exist and should be used
+      use_pooled_for_model <- use_pooled && !is.null(model_result$pooled_results)
+
+      if (use_pooled_for_model) {
+        # USE POOLED RESULTS (Rubin's rules)
+        if (verbose) cat("      Using Rubin's rules pooled results\n")
+
+        pooled_data <- model_result$pooled_results
+
+        # If treatment_var not specified, use the first non-intercept term
+        if (is.null(treat_var)) {
+          available_terms <- pooled_data$term[pooled_data$term != "(Intercept)"]
+          if (length(available_terms) == 0) {
+            stop("No non-intercept coefficients found in pooled results")
+          }
+          treat_var <- available_terms[1]
+          if (verbose) {
+            cat("      Using", treat_var, "as treatment variable (first non-intercept term)\n")
+          }
         }
-        treat_var <- available_terms[1]
-        if (verbose) {
-          cat("Using", treat_var, "as treatment variable (first non-intercept term)\n")
+
+        # Check if treatment variable exists
+        if (!treat_var %in% pooled_data$term) {
+          stop(paste("Treatment variable", treat_var, "not found in pooled results for", outcome_name,
+                     "\nAvailable coefficients:", paste(pooled_data$term, collapse = ", ")))
         }
+
+        # Extract pooled info
+        pooled_row <- pooled_data %>% filter(term == treat_var)
+
+        glm_estimate <- pooled_row$estimate
+        glm_se <- pooled_row$se
+        glm_p_value <- pooled_row$p.value
+        glm_conf_low <- pooled_row$ci_lower
+        glm_conf_high <- pooled_row$ci_upper
+        fmi <- pooled_row$fmi
+        df_adjusted <- pooled_row$df
+        inference_method <- "Rubin's Rules (MI)"
+        n_imputations <- model_result$n_imputations
+
+      } else {
+        # USE SINGLE IMPUTATION (backward compatible)
+        if (verbose && !is.null(model_result$pooled_results)) {
+          cat("      Using single imputation results (use_pooled=FALSE)\n")
+        }
+
+        # Get GLM summary
+        glm_summary <- summary(model_result$model)
+        coef_table <- glm_summary$coefficients
+
+        # If treatment_var not specified, use the first non-intercept term
+        if (is.null(treat_var)) {
+          available_terms <- rownames(coef_table)[rownames(coef_table) != "(Intercept)"]
+          if (length(available_terms) == 0) {
+            stop("No non-intercept coefficients found in model")
+          }
+          treat_var <- available_terms[1]
+          if (verbose) {
+            cat("      Using", treat_var, "as treatment variable (first non-intercept term)\n")
+          }
+        }
+
+        # Check if treatment variable exists in model
+        if (!treat_var %in% rownames(coef_table)) {
+          stop(paste("Treatment variable", treat_var, "not found in model for", outcome_name,
+                     "\nAvailable coefficients:", paste(rownames(coef_table), collapse = ", ")))
+        }
+
+        # Extract GLM info
+        glm_estimate <- coef_table[treat_var, "Estimate"]
+        glm_se <- coef_table[treat_var, "Std. Error"]
+        glm_p_value <- coef_table[treat_var, "Pr(>|t|)"]
+
+        # Calculate GLM confidence intervals
+        glm_conf_low <- glm_estimate - 1.96 * glm_se
+        glm_conf_high <- glm_estimate + 1.96 * glm_se
+
+        fmi <- NA_real_
+        df_adjusted <- NA_real_
+        inference_method <- "Single Imputation"
+        n_imputations <- 1
       }
-
-      # Check if treatment variable exists in model
-      if (!treat_var %in% rownames(coef_table)) {
-        stop(paste("Treatment variable", treat_var, "not found in model for", outcome_name,
-                   "\nAvailable coefficients:", paste(rownames(coef_table), collapse = ", ")))
-      }
-
-      # Extract GLM info
-      glm_estimate <- coef_table[treat_var, "Estimate"]
-      glm_se <- coef_table[treat_var, "Std. Error"]
-      glm_p_value <- coef_table[treat_var, "Pr(>|t|)"]
-
-      # Calculate GLM confidence intervals
-      glm_conf_low <- glm_estimate - 1.96 * glm_se
-      glm_conf_high <- glm_estimate + 1.96 * glm_se
 
       # Extract bootstrap info if available
       bootstrap_available <- !is.null(model_result$bootstrap_summary) &&
@@ -142,7 +196,11 @@ prepare_sens_table_data <- function(
         bootstrap_estimate = bootstrap_estimate,
         bootstrap_conf_low = bootstrap_conf_low,
         bootstrap_conf_high = bootstrap_conf_high,
-        sample_size = sample_size
+        sample_size = sample_size,
+        n_imputations = n_imputations,
+        inference_method = inference_method,
+        fmi = fmi,
+        df_adjusted = df_adjusted
       )
 
     }, error = function(e) {
@@ -194,6 +252,15 @@ prepare_sens_table_data <- function(
     cat("  Sensitivity types:", length(unique(all_data$sensitivity_type)), "\n")
     cat("  Outcomes:", length(unique(all_data$model_name)), "\n")
     cat("  Total rows:", nrow(all_data), "\n")
+
+    # Show inference method info
+    inference_methods <- unique(all_data$inference_method)
+    cat("  Inference methods:", paste(inference_methods, collapse = ", "), "\n")
+
+    mi_models <- sum(all_data$n_imputations > 1)
+    if (mi_models > 0) {
+      cat("  Models using multiple imputation:", mi_models, "\n")
+    }
   }
 
   return(all_data)

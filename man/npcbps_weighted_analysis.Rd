@@ -16,6 +16,9 @@ npcbps_weighted_analysis(
   mice_method = "pmm",
   mice_seed = 500,
   cbps_estimand = "ATE",
+  bootstrap_n = 1000,
+  bootstrap_seed = 20250417,
+  bootstrap_imputation = 1,
   balance_threshold_m = 0.1,
   balance_threshold_v = 2,
   family = gaussian(),
@@ -45,6 +48,12 @@ npcbps_weighted_analysis(
 
 \item{cbps_estimand}{Character. CBPS estimand: "ATE" (Average Treatment Effect) or "ATT" (Average Treatment on Treated) (default: "ATE")}
 
+\item{bootstrap_n}{Integer. Number of bootstrap samples for the GLM (default: 1000, set to 0 to skip)}
+
+\item{bootstrap_seed}{Integer. Random seed for bootstrap (default: 20250417)}
+
+\item{bootstrap_imputation}{Integer. Which imputation to use for bootstrap (default: 1 = first imputation)}
+
 \item{balance_threshold_m}{Numeric. Balance threshold for mean differences (default: 0.1)}
 
 \item{balance_threshold_v}{Numeric. Balance threshold for variance ratios (default: 2)}
@@ -56,7 +65,13 @@ npcbps_weighted_analysis(
 \value{
 A list containing:
 \itemize{
-\item \code{pooled_results}: Pooled coefficients using Rubin's rules
+\item \code{data}: Final analysis dataset from first imputation (for compatibility)
+\item \code{model}: Fitted weighted GLM model from first imputation (for compatibility)
+\item \code{weights}: NPCBPS weight object from first imputation (for compatibility)
+\item \code{balance}: Balance assessment from first imputation (for compatibility)
+\item \code{bootstrap_summary}: Bootstrap CIs from the selected imputation's GLM
+\item \code{bootstrap_results}: Bootstrap distribution matrix from the selected imputation's GLM
+\item \code{pooled_results}: Rubin's rules pooled coefficients (PRIMARY RESULTS)
 \item \code{imputation_results}: List of results from each imputation
 \item \code{balance_summary}: Summary of balance across imputations
 \item \code{sample_sizes}: List with initial and final sample sizes
@@ -64,30 +79,86 @@ A list containing:
 }
 \description{
 Performs comprehensive Nonparametric Covariate Balancing Propensity Score (NPCBPS) weighted analysis
-with proper multiple imputation using Rubin's rules for pooling.
+with proper multiple imputation using Rubin's rules, plus bootstrap of a single GLM model.
 }
 \details{
-This function implements the correct multiple imputation workflow:
+This function implements proper multiple imputation workflow:
 \enumerate{
-\item Data cleaning and missing data assessment
-\item Multiple imputation using MICE with MCAR testing
+\item Data cleaning and missing data assessment with MCAR testing
+\item Multiple imputation using MICE (m imputations kept separate)
 \item For EACH imputation:
 \itemize{
 \item Estimate Nonparametric CBPS propensity scores
 \item Assess covariate balance
 \item Fit weighted GLM
 }
-\item Pool results across imputations using Rubin's rules
+\item Pool results using Rubin's rules (PRIMARY inference)
+\item Bootstrap ONE of the fitted GLM models to examine distribution
 }
 
-Rubin's rules combine:
-\itemize{
-\item Within-imputation variance (average variance across imputations)
-\item Between-imputation variance (variance of estimates across imputations)
-\item Simulation variance due to finite number of imputations
+The bootstrap provides the distribution of coefficients for a single imputation's model,
+while Rubin's rules provides the primary inference accounting for imputation uncertainty.
+
+The nonparametric CBPS method uses kernel-based estimation and does not assume
+a parametric form for the propensity score model. This can be more flexible than
+parametric CBPS but may require larger sample sizes.
+
+The function tests for Missing Completely At Random (MCAR) assumptions and provides
+warnings about potential Missing At Random (MAR) or Missing Not At Random (MNAR) scenarios.
 }
+\examples{
+\dontrun{
+# Basic usage with continuous outcome (default gaussian family)
+results <- npcbps_weighted_analysis(
+  data = my_data,
+  outcome_var = "weight_percentile",
+  treatment_var = "treatment_group",
+  additional_predictors = c("age", "gender"),
+  imputation_vars = c("mother_age", "gestational_age"),
+  verbose = TRUE
+)
+
+# Binary outcome (e.g., preterm birth yes/no)
+results <- npcbps_weighted_analysis(
+  data = my_data,
+  outcome_var = "preterm_birth",
+  treatment_var = "treatment_group",
+  additional_predictors = c("age", "gender"),
+  imputation_vars = c("mother_age", "gestational_age"),
+  family = binomial(),
+  verbose = TRUE
+)
+
+# With interaction terms
+results <- npcbps_weighted_analysis(
+  data = my_data,
+  outcome_var = "outcome",
+  treatment_var = "treatment",
+  additional_predictors = c("var1", "var2", "var1*var2"),
+  imputation_vars = c("covariate1", "covariate2"),
+  verbose = TRUE
+)
+
+# Access results
+results$pooled_results  # PRIMARY - Rubin's rules
+results$bootstrap_summary  # Bootstrap distribution of one GLM
+results$balance
+}
+
 }
 \references{
+Allison, P. (2015). Imputation by predictive mean matching: Promise & peril. Statistical Horizons.
+
+Austin, P. C. (2009). Balance diagnostics for comparing the distribution of baseline
+covariates between treatment groups in propensity-score matched samples. Statistics in Medicine, 28(25), 3083-107.
+
+Barnard, J., & Rubin, D. B. (1999). Small-sample degrees of freedom with multiple imputation.
+Biometrika, 86(4), 948-955.
+
+Fong, C., Hazlett, C., & Imai, K. (2018). Covariate balancing propensity score for a
+continuous treatment: Application to the efficacy of political advertisements.
+The Annals of Applied Statistics, 12(1), 156-177.
+
 Rubin, D. B. (1987). Multiple Imputation for Nonresponse in Surveys. Wiley.
 
 van Buuren, S. (2018). Flexible Imputation of Missing Data (2nd ed.). CRC Press.
