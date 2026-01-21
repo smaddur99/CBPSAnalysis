@@ -553,7 +553,7 @@ npcbps_weighted_analysis <- function(
   # Rubin's rules
   Q_bar <- rowMeans(Q_m)
   U_bar <- rowMeans(U_m)
-  B <- apply(Q_m, 1, var)
+  B <- apply(Q_m, 1, stats::var)  # FIXED: Explicitly use stats::var
 
   m <- n_successful
   T <- U_bar + B + B/m
