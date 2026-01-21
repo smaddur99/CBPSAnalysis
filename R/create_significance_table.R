@@ -70,9 +70,8 @@ create_significance_table <- function(
     filename = NULL,
     treatment_label = NULL,
     model_labels = NULL,
-    include_bootstrap = TRUE,
     include_fit_stats = TRUE,
-    include_mi_info = TRUE,  # NEW: Show MI-specific info
+    include_mi_info = TRUE,
     decimal_places = 3,
     font_size = 16,
     font_family = "Times New Roman",
@@ -81,7 +80,7 @@ create_significance_table <- function(
     include_subtitle = FALSE
 ) {
 
-  # Since this is part of a package, dependencies should already be available
+  # Check required packages
   required_packages <- c("dplyr", "gt", "tibble")
   missing_packages <- required_packages[!sapply(required_packages, requireNamespace, quietly = TRUE)]
 
@@ -130,7 +129,7 @@ create_significance_table <- function(
                             model_labels[model_name],
                             model_name),
 
-      # Format confidence intervals (with safety check)
+      # Format confidence intervals
       glm_conf_int = if(all(c("glm_conf_low", "glm_conf_high") %in% names(.))) {
         paste0("(",
                sprintf(paste0("%.", decimal_places, "f"), glm_conf_low),
@@ -139,17 +138,6 @@ create_significance_table <- function(
                ")")
       } else {
         "CI not available"
-      },
-
-      # Format bootstrap confidence intervals if available
-      bootstrap_conf_int = if(include_bootstrap && all(c("bootstrap_conf_low", "bootstrap_conf_high") %in% names(.))) {
-        paste0("(",
-               sprintf(paste0("%.", decimal_places, "f"), bootstrap_conf_low),
-               ", ",
-               sprintf(paste0("%.", decimal_places, "f"), bootstrap_conf_high),
-               ")")
-      } else {
-        NA
       },
 
       # Get sample size - handle both sample_size and final_sample_size columns
@@ -161,7 +149,7 @@ create_significance_table <- function(
         "N/A"
       },
 
-      # NEW: Format MI info if available
+      # Format MI info if available
       mi_info = if(include_mi_info && "n_imputations" %in% names(.) && "inference_method" %in% names(.)) {
         ifelse(.data$n_imputations > 1,
                paste0("MI (m=", .data$n_imputations, ")"),
@@ -170,7 +158,7 @@ create_significance_table <- function(
         NA
       },
 
-      # NEW: Format FMI if available
+      # Format FMI if available
       fmi_formatted = if(include_mi_info && "fmi" %in% names(.)) {
         ifelse(!is.na(.data$fmi),
                sprintf(paste0("%.", decimal_places, "f"), .data$fmi),
@@ -207,114 +195,55 @@ create_significance_table <- function(
       row_id = row_number()
     )
 
-  # Select and rename columns for the table
-  if (include_bootstrap && "bootstrap_estimate" %in% names(formatted_data) && !all(is.na(formatted_data$bootstrap_estimate))) {
-    # Create base selection with bootstrap
-    base_select <- c(
-      "row_id",
-      "pretty_model",
-      "glm_estimate",
-      "bootstrap_estimate",
-      "glm_conf_int",
-      "bootstrap_conf_int",
-      "p_value_formatted",
-      "balance_ratio",
-      "sample_size_col",
-      "is_significant"
-    )
+  # Select and rename columns for the table (NO BOOTSTRAP)
+  base_select <- c(
+    "row_id",
+    "pretty_model",
+    "glm_estimate",
+    "glm_conf_int",
+    "p_value_formatted",
+    "balance_ratio",
+    "sample_size_col",
+    "is_significant"
+  )
 
-    # NEW: Add MI info columns if they exist and aren't all NA
-    if (include_mi_info && "mi_info" %in% names(formatted_data) && !all(is.na(formatted_data$mi_info))) {
-      base_select <- c(base_select, "mi_info")
-    }
-    if (include_mi_info && "fmi_formatted" %in% names(formatted_data) && !all(is.na(formatted_data$fmi_formatted))) {
-      base_select <- c(base_select, "fmi_formatted")
-    }
+  # Add MI info columns if they exist and aren't all NA
+  if (include_mi_info && "mi_info" %in% names(formatted_data) && !all(is.na(formatted_data$mi_info))) {
+    base_select <- c(base_select, "mi_info")
+  }
+  if (include_mi_info && "fmi_formatted" %in% names(formatted_data) && !all(is.na(formatted_data$fmi_formatted))) {
+    base_select <- c(base_select, "fmi_formatted")
+  }
 
-    # Add fit stats if requested and available
-    if (include_fit_stats && all(c("AIC", "BIC", "BICc") %in% names(formatted_data))) {
-      base_select <- c(base_select, "AIC", "BIC", "BICc")
-    }
+  # Add fit stats if requested and available
+  if (include_fit_stats && all(c("AIC", "BIC", "BICc") %in% names(formatted_data))) {
+    base_select <- c(base_select, "AIC", "BIC", "BICc")
+  }
 
-    table_final <- formatted_data %>%
-      dplyr::select(dplyr::all_of(base_select))
+  table_final <- formatted_data %>%
+    dplyr::select(dplyr::all_of(base_select))
 
-    col_labels <- list(
-      pretty_model = "Outcome",
-      glm_estimate = "Estimate",
-      bootstrap_estimate = "Bootstrap Est.",
-      glm_conf_int = "95% CI",
-      bootstrap_conf_int = "Bootstrap 95% CI",
-      p_value_formatted = "P-Value",
-      balance_ratio = "Covariates Balanced",
-      sample_size_col = "N"
-    )
+  col_labels <- list(
+    pretty_model = "Model",
+    glm_estimate = "Estimate",
+    glm_conf_int = "95% CI",
+    p_value_formatted = "P-Value",
+    balance_ratio = "Covariates Balanced",
+    sample_size_col = "N"
+  )
 
-    # NEW: Add MI column labels if present
-    if ("mi_info" %in% names(table_final)) {
-      col_labels$mi_info <- "Method"
-    }
-    if ("fmi_formatted" %in% names(table_final)) {
-      col_labels$fmi_formatted <- "FMI"
-    }
+  # Add MI column labels if present
+  if ("mi_info" %in% names(table_final)) {
+    col_labels$mi_info <- "Method"
+  }
+  if ("fmi_formatted" %in% names(table_final)) {
+    col_labels$fmi_formatted <- "FMI"
+  }
 
-    if (include_fit_stats && "AIC" %in% names(table_final)) {
-      col_labels$AIC <- "AIC"
-      col_labels$BIC <- "BIC"
-      col_labels$BICc <- "BICc"
-    }
-
-  } else {
-    # Create base selection without bootstrap
-    base_select <- c(
-      "row_id",
-      "pretty_model",
-      "glm_estimate",
-      "glm_conf_int",
-      "p_value_formatted",
-      "balance_ratio",
-      "sample_size_col",
-      "is_significant"
-    )
-
-    # NEW: Add MI info columns if they exist and aren't all NA
-    if (include_mi_info && "mi_info" %in% names(formatted_data) && !all(is.na(formatted_data$mi_info))) {
-      base_select <- c(base_select, "mi_info")
-    }
-    if (include_mi_info && "fmi_formatted" %in% names(formatted_data) && !all(is.na(formatted_data$fmi_formatted))) {
-      base_select <- c(base_select, "fmi_formatted")
-    }
-
-    # Add fit stats if requested and available
-    if (include_fit_stats && all(c("AIC", "BIC", "BICc") %in% names(formatted_data))) {
-      base_select <- c(base_select, "AIC", "BIC", "BICc")
-    }
-
-    table_final <- formatted_data %>%
-      dplyr::select(dplyr::all_of(base_select))
-
-    col_labels <- list(
-      pretty_model = "Model",
-      glm_estimate = "Estimate",
-      glm_conf_int = "95% CI",
-      p_value_formatted = "P-Value",
-      balance_ratio = "Covariates Balanced",
-      sample_size_col = "N"
-    )
-
-    # NEW: Add MI column labels if present
-    if ("mi_info" %in% names(table_final)) {
-      col_labels$mi_info <- "Method"
-    }
-    if ("fmi_formatted" %in% names(table_final)) {
-      col_labels$fmi_formatted <- "FMI"
-    }
-
-    if (include_fit_stats && "AIC" %in% names(table_final)) {
-      col_labels$AIC <- "AIC"
-      col_labels$BIC <- "BIC"
-      col_labels$BICc <- "BICc"
-    }
+  if (include_fit_stats && "AIC" %in% names(table_final)) {
+    col_labels$AIC <- "AIC"
+    col_labels$BIC <- "BIC"
+    col_labels$BICc <- "BICc"
   }
 
   # Create the GT table with conditional subtitle
@@ -336,14 +265,9 @@ create_significance_table <- function(
   }
 
   # Format numeric columns
-  numeric_cols <- c("glm_estimate")
-  if("bootstrap_estimate" %in% names(table_final)) {
-    numeric_cols <- c(numeric_cols, "bootstrap_estimate")
-  }
-
   gt_table <- gt_table %>%
     gt::fmt_number(
-      columns = dplyr::all_of(numeric_cols),
+      columns = "glm_estimate",
       decimals = decimal_places
     )
 
@@ -399,9 +323,9 @@ create_significance_table <- function(
     # Alignment
     gt::cols_align(align = "left", columns = "pretty_model") %>%
     gt::cols_align(align = "center", columns = c("sample_size_col", "balance_ratio", "p_value_formatted")) %>%
-    gt::cols_align(align = "right", columns = contains("estimate"))
+    gt::cols_align(align = "right", columns = "glm_estimate")
 
-  # NEW: Align MI columns to center if present
+  # Align MI columns to center if present
   if ("mi_info" %in% names(table_final)) {
     gt_table <- gt_table %>%
       gt::cols_align(align = "center", columns = "mi_info")
@@ -435,7 +359,7 @@ create_significance_table <- function(
   cat("  Significant models (p <", alpha_threshold, "):", sig_count, "\n")
   cat("  Treatment variable:", treatment_label, "\n")
 
-  # NEW: Show MI info in summary
+  # Show MI info in summary
   if ("mi_info" %in% names(table_final)) {
     mi_models <- sum(grepl("MI", table_final$mi_info, ignore.case = TRUE))
     if (mi_models > 0) {

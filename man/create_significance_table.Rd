@@ -10,7 +10,6 @@ create_significance_table(
   filename = NULL,
   treatment_label = NULL,
   model_labels = NULL,
-  include_bootstrap = TRUE,
   include_fit_stats = TRUE,
   include_mi_info = TRUE,
   decimal_places = 3,
@@ -32,8 +31,6 @@ create_significance_table(
 
 \item{model_labels}{Named character vector. Pretty names for models (default: NULL)}
 
-\item{include_bootstrap}{Logical. Whether to include bootstrap results (default: TRUE)}
-
 \item{include_fit_stats}{Logical. Whether to include model fit statistics (AIC/BIC/BICc) (default: TRUE)}
 
 \item{decimal_places}{Integer. Number of decimal places for estimates (default: 3)}
@@ -47,6 +44,8 @@ create_significance_table(
 \item{alpha_threshold}{Numeric. Threshold for highlighting significance (default: 0.05)}
 
 \item{include_subtitle}{Logical. Whether to include treatment variable subtitle (default: FALSE)}
+
+\item{include_bootstrap}{Logical. Whether to include bootstrap results (default: TRUE)}
 }
 \value{
 A gt table object that can be displayed or saved

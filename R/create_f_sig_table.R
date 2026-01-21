@@ -66,7 +66,6 @@ create_f_sig_table <- function(
     filename = NULL,
     treatment_label = NULL,
     model_labels = NULL,
-    include_bootstrap = TRUE,
     decimal_places = 3,
     font_size = 16,
     font_family = "Times New Roman",
@@ -75,8 +74,7 @@ create_f_sig_table <- function(
     include_subtitle = FALSE
 ) {
 
-  # Since this is part of a package, dependencies should already be available
-  # Just check that required packages are accessible
+  # Check required packages
   required_packages <- c("dplyr", "gt", "tibble")
   missing_packages <- required_packages[!sapply(required_packages, requireNamespace, quietly = TRUE)]
 
@@ -85,13 +83,16 @@ create_f_sig_table <- function(
          "\nTry restarting R and reinstalling CBPSAnalysis package.")
   }
 
-  # Extract results - handle both direct dataframe and list input
+  # Extract results - handle multiple input formats
   if ("significant_only" %in% names(sig_results)) {
     if (show_all_models) {
       table_data <- sig_results$detailed_results
     } else {
       table_data <- sig_results$significant_only
     }
+  } else if ("estimates" %in% names(sig_results)) {
+    # Input from extract_cbps_results() with include_balance_details = TRUE
+    table_data <- sig_results$estimates
   } else {
     table_data <- sig_results
   }
@@ -109,7 +110,7 @@ create_f_sig_table <- function(
 
   # Create pretty treatment label
   if (is.null(treatment_label)) {
-    treatment_label <- unique(table_data$variable)[1]  # Use the first (should be only) variable name
+    treatment_label <- unique(table_data$variable)[1]
   }
 
   # Create pretty model names
@@ -125,7 +126,7 @@ create_f_sig_table <- function(
                             model_labels[model_name],
                             model_name),
 
-      # Format confidence intervals (with safety check)
+      # Format confidence intervals
       glm_conf_int = if(all(c("glm_conf_low", "glm_conf_high") %in% names(.))) {
         paste0("(",
                sprintf(paste0("%.", decimal_places, "f"), glm_conf_low),
@@ -134,17 +135,6 @@ create_f_sig_table <- function(
                ")")
       } else {
         "CI not available"
-      },
-
-      # Format bootstrap confidence intervals if available
-      bootstrap_conf_int = if(include_bootstrap && all(c("bootstrap_conf_low", "bootstrap_conf_high") %in% names(.))) {
-        paste0("(",
-               sprintf(paste0("%.", decimal_places, "f"), bootstrap_conf_low),
-               ", ",
-               sprintf(paste0("%.", decimal_places, "f"), bootstrap_conf_high),
-               ")")
-      } else {
-        NA
       },
 
       # Get sample size - handle both sample_size and final_sample_size columns
@@ -170,55 +160,30 @@ create_f_sig_table <- function(
       # Format p-value with significance stars
       p_value_formatted = paste0(sprintf(paste0("%.", decimal_places, "f"), glm_p_value), sig_symbol)
     ) %>%
-    dplyr::arrange(glm_p_value) %>%  # Sort by significance (most significant first)
+    dplyr::arrange(glm_p_value) %>%  # Sort by significance
     dplyr::mutate(
       row_id = row_number()
     )
 
-  # Select and rename columns for the table (without balance_ratio)
-  if (include_bootstrap && "bootstrap_estimate" %in% names(formatted_data) && !all(is.na(formatted_data$bootstrap_estimate))) {
-    table_final <- formatted_data %>%
-      dplyr::select(
-        row_id,
-        pretty_model,
-        glm_estimate,
-        bootstrap_estimate,
-        glm_conf_int,
-        bootstrap_conf_int,
-        p_value_formatted,
-        sample_size_col,
-        is_significant
-      )
-
-    col_labels <- list(
-      pretty_model = "Outcome",
-      glm_estimate = "Estimate",
-      bootstrap_estimate = "Bootstrap Est.",
-      glm_conf_int = "95% CI",
-      bootstrap_conf_int = "Bootstrap 95% CI",
-      p_value_formatted = "P-Value",
-      sample_size_col = "N"
+  # Select and rename columns for the table (NO BOOTSTRAP)
+  table_final <- formatted_data %>%
+    dplyr::select(
+      row_id,
+      pretty_model,
+      glm_estimate,
+      glm_conf_int,
+      p_value_formatted,
+      sample_size_col,
+      is_significant
     )
-  } else {
-    table_final <- formatted_data %>%
-      dplyr::select(
-        row_id,
-        pretty_model,
-        glm_estimate,
-        glm_conf_int,
-        p_value_formatted,
-        sample_size_col,
-        is_significant
-      )
 
-    col_labels <- list(
-      pretty_model = "Model",
-      glm_estimate = "Estimate",
-      glm_conf_int = "95% CI",
-      p_value_formatted = "P-Value",
-      sample_size_col = "N"
-    )
-  }
+  col_labels <- list(
+    pretty_model = "Model",
+    glm_estimate = "Estimate",
+    glm_conf_int = "95% CI",
+    p_value_formatted = "P-Value",
+    sample_size_col = "N"
+  )
 
   # Create the GT table with conditional subtitle
   if (include_subtitle) {
@@ -240,8 +205,7 @@ create_f_sig_table <- function(
 
   gt_table <- gt_table %>%
     gt::fmt_number(
-      columns = c("glm_estimate",
-                  if("bootstrap_estimate" %in% names(table_final)) "bootstrap_estimate" else NULL),
+      columns = "glm_estimate",
       decimals = decimal_places
     ) %>%
 
@@ -254,7 +218,7 @@ create_f_sig_table <- function(
     # Highlight significant results with light blue
     gt::tab_style(
       style = list(
-        gt::cell_fill(color = "#e3f2fd"),  # Light blue instead of green
+        gt::cell_fill(color = "#e3f2fd"),
         gt::cell_text(weight = "bold")
       ),
       locations = gt::cells_body(rows = table_final$row_id[table_final$is_significant])
@@ -287,12 +251,10 @@ create_f_sig_table <- function(
     # Alignment
     gt::cols_align(align = "left", columns = "pretty_model") %>%
     gt::cols_align(align = "center", columns = c("sample_size_col", "p_value_formatted")) %>%
-    gt::cols_align(align = "right", columns = contains("estimate")) %>%
+    gt::cols_align(align = "right", columns = "glm_estimate") %>%
 
     # Hide utility columns
     gt::cols_hide(columns = c("row_id", "is_significant"))
-
-  # NO FOOTNOTES - Clean and simple table
 
   # Save if filename provided
   if (!is.null(filename)) {

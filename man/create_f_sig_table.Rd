@@ -10,7 +10,6 @@ create_f_sig_table(
   filename = NULL,
   treatment_label = NULL,
   model_labels = NULL,
-  include_bootstrap = TRUE,
   decimal_places = 3,
   font_size = 16,
   font_family = "Times New Roman",
@@ -30,8 +29,6 @@ create_f_sig_table(
 
 \item{model_labels}{Named character vector. Pretty names for models (default: NULL)}
 
-\item{include_bootstrap}{Logical. Whether to include bootstrap results (default: TRUE)}
-
 \item{decimal_places}{Integer. Number of decimal places for estimates (default: 3)}
 
 \item{font_size}{Integer. Font size for the table (default: 16)}
@@ -43,6 +40,8 @@ create_f_sig_table(
 \item{alpha_threshold}{Numeric. Threshold for highlighting significance (default: 0.05)}
 
 \item{include_subtitle}{Logical. Whether to include treatment variable subtitle (default: FALSE)}
+
+\item{include_bootstrap}{Logical. Whether to include bootstrap results (default: TRUE)}
 }
 \value{
 A gt table object that can be displayed or saved

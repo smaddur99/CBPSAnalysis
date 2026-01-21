@@ -95,7 +95,6 @@ create_sens_table <- function(sig_results,
                               filename = NULL,
                               treatment_label = NULL,
                               sens_labels = NULL,
-                              include_bootstrap = TRUE,
                               decimal_places = 3,
                               font_size = 16,
                               font_family = "Times New Roman",
@@ -153,13 +152,6 @@ create_sens_table <- function(sig_results,
       } else {
         "CI not available"
       },
-      bootstrap_conf_int = if (include_bootstrap &&
-                               all(c("bootstrap_conf_low", "bootstrap_conf_high") %in% names(.))) {
-        paste0("(", sprintf(paste0("%.", decimal_places, "f"), bootstrap_conf_low),
-               ", ", sprintf(paste0("%.", decimal_places, "f"), bootstrap_conf_high), ")")
-      } else {
-        NA
-      },
       # Get sample size - handle both sample_size and final_sample_size columns
       sample_size_col = if("sample_size" %in% names(.)) {
         ifelse(!is.na(.data$sample_size), .data$sample_size, "")
@@ -181,43 +173,23 @@ create_sens_table <- function(sig_results,
     dplyr::arrange(sensitivity_type, glm_p_value) %>%
     dplyr::mutate(row_id = row_number())
 
-  # Select columns - KEEP sens_group in data but DON'T label it
-  if (include_bootstrap && "bootstrap_estimate" %in% names(formatted_data) &&
-      !all(is.na(formatted_data$bootstrap_estimate))) {
-    table_final <- formatted_data %>%
-      dplyr::select(row_id, sens_group, outcome_name, glm_estimate,
-                    bootstrap_estimate, glm_conf_int, bootstrap_conf_int,
-                    p_value_formatted, sample_size_col, is_significant)
+  # Select columns (NO BOOTSTRAP)
+  table_final <- formatted_data %>%
+    dplyr::select(row_id, sens_group, outcome_name, glm_estimate,
+                  glm_conf_int, p_value_formatted, sample_size_col, is_significant)
 
-    # CRITICAL: Do NOT include sens_group in col_labels
-    col_labels <- list(
-      outcome_name = "Outcome",
-      glm_estimate = "Estimate",
-      bootstrap_estimate = "Bootstrap Est.",
-      glm_conf_int = "95% CI",
-      bootstrap_conf_int = "Bootstrap 95% CI",
-      p_value_formatted = "P-Value",
-      sample_size_col = "N"
-    )
-  } else {
-    table_final <- formatted_data %>%
-      dplyr::select(row_id, sens_group, outcome_name, glm_estimate,
-                    glm_conf_int, p_value_formatted, sample_size_col, is_significant)
-
-    # CRITICAL: Do NOT include sens_group in col_labels
-    col_labels <- list(
-      outcome_name = "Outcome",
-      glm_estimate = "Estimate",
-      glm_conf_int = "95% CI",
-      p_value_formatted = "P-Value",
-      sample_size_col = "N"
-    )
-  }
+  col_labels <- list(
+    outcome_name = "Outcome",
+    glm_estimate = "Estimate",
+    glm_conf_int = "95% CI",
+    p_value_formatted = "P-Value",
+    sample_size_col = "N"
+  )
 
   # Create gt table with row groups
   if (include_subtitle) {
     gt_table <- table_final %>%
-      gt::gt(groupname_col = "sens_group") %>%  # CHANGED: Use groupname_col parameter
+      gt::gt(groupname_col = "sens_group") %>%
       gt::cols_label(.list = col_labels) %>%
       gt::tab_header(
         title = gt::md(table_title),
@@ -225,7 +197,7 @@ create_sens_table <- function(sig_results,
       )
   } else {
     gt_table <- table_final %>%
-      gt::gt(groupname_col = "sens_group") %>%  # CHANGED: Use groupname_col parameter
+      gt::gt(groupname_col = "sens_group") %>%
       gt::cols_label(.list = col_labels) %>%
       gt::tab_header(title = gt::md(table_title))
   }
@@ -233,8 +205,7 @@ create_sens_table <- function(sig_results,
   # Apply styling
   gt_table <- gt_table %>%
     gt::fmt_number(
-      columns = c("glm_estimate",
-                  if ("bootstrap_estimate" %in% names(table_final)) "bootstrap_estimate" else NULL),
+      columns = "glm_estimate",
       decimals = decimal_places
     ) %>%
     gt::tab_style(
@@ -266,8 +237,8 @@ create_sens_table <- function(sig_results,
     ) %>%
     gt::cols_align(align = "left", columns = "outcome_name") %>%
     gt::cols_align(align = "center", columns = c("sample_size_col", "p_value_formatted")) %>%
-    gt::cols_align(align = "right", columns = contains("estimate")) %>%
-    gt::cols_hide(columns = c("row_id", "is_significant"))  # Hide helper columns but NOT sens_group
+    gt::cols_align(align = "right", columns = "glm_estimate") %>%
+    gt::cols_hide(columns = c("row_id", "is_significant"))
 
   # Save if filename provided
   if (!is.null(filename)) {

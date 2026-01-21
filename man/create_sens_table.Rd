@@ -10,7 +10,6 @@ create_sens_table(
   filename = NULL,
   treatment_label = NULL,
   sens_labels = NULL,
-  include_bootstrap = TRUE,
   decimal_places = 3,
   font_size = 16,
   font_family = "Times New Roman",
@@ -39,9 +38,6 @@ unique variable name from data (default: NULL)}
 Names should match sensitivity_type values in sig_results. If NULL, uses original
 sensitivity_type values (default: NULL)}
 
-\item{include_bootstrap}{Logical. Whether to include bootstrap estimates and confidence
-intervals in table (default: TRUE)}
-
 \item{decimal_places}{Integer. Number of decimal places for estimates (default: 3)}
 
 \item{font_size}{Integer. Font size in pixels (default: 16)}
@@ -55,6 +51,9 @@ intervals in table (default: TRUE)}
 \item{alpha_threshold}{Numeric. Significance threshold for highlighting rows (default: 0.05)}
 
 \item{include_subtitle}{Logical. Whether to include treatment variable in subtitle (default: FALSE)}
+
+\item{include_bootstrap}{Logical. Whether to include bootstrap estimates and confidence
+intervals in table (default: TRUE)}
 }
 \value{
 A gt table object with formatted sensitivity analysis results
