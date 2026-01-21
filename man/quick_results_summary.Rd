@@ -2,10 +2,10 @@
 % Please edit documentation in R/extract_cbps_results.R
 \name{quick_results_summary}
 \alias{quick_results_summary}
-\title{Quick Results Summary for Visualization (UNCHANGED)}
+\title{Quick Results Summary for Visualization}
 \usage{
 quick_results_summary(cbps_results)
 }
 \description{
-Quick Results Summary for Visualization (UNCHANGED)
+Quick Results Summary for Visualization
 }

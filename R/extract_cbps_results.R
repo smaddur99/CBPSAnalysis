@@ -62,7 +62,7 @@ extract_cbps_results <- function(cbps_results, include_balance_details = TRUE) {
     }
   }
 
-  # 1. EXTRACT MODEL ESTIMATES (unchanged)
+  # 1. EXTRACT MODEL ESTIMATES
   model_summary <- broom::tidy(cbps_results$model, conf.int = TRUE) %>%
     mutate(
       analysis_type = "GLM_Model",
@@ -78,7 +78,7 @@ extract_cbps_results <- function(cbps_results, include_balance_details = TRUE) {
       glm_conf_high = conf.high
     )
 
-  # 2. EXTRACT BOOTSTRAP RESULTS (unchanged)
+  # 2. EXTRACT BOOTSTRAP RESULTS
   bootstrap_results <- cbps_results$bootstrap_summary %>%
     mutate(
       analysis_type = "Bootstrap",
@@ -92,7 +92,7 @@ extract_cbps_results <- function(cbps_results, include_balance_details = TRUE) {
       bootstrap_conf_high = ci_upper
     )
 
-  # 3. EXTRACT BALANCE STATISTICS (unchanged)
+  # 3. EXTRACT BALANCE STATISTICS
   balance_data <- cbps_results$balance
 
   # Extract balance table as dataframe
@@ -106,7 +106,7 @@ extract_cbps_results <- function(cbps_results, include_balance_details = TRUE) {
         sample_size = cbps_results$sample_sizes$final
       )
 
-    # Clean up column names (unchanged)
+    # Clean up column names
     balance_names <- names(balance_df)
     new_names <- balance_names
 
@@ -132,7 +132,7 @@ extract_cbps_results <- function(cbps_results, include_balance_details = TRUE) {
     )
   }
 
-  # 4. COMBINE ALL RESULTS (unchanged)
+  # 4. COMBINE ALL RESULTS
   combined_estimates <- model_summary %>%
     full_join(bootstrap_results, by = c("variable", "sample_size")) %>%
     mutate(analysis_type = "Combined")
@@ -167,20 +167,29 @@ extract_cbps_results <- function(cbps_results, include_balance_details = TRUE) {
           if ("diff_adj" %in% names(balance_df)) mean(abs(balance_df$diff_adj), na.rm = TRUE) else NA
         )
       ),
-      # NEW: Add pooled results if they exist (for MI analysis)
+      # Add pooled results if they exist (for MI analysis)
       pooled_estimates = if (!is.null(cbps_results$pooled_results)) {
-        cbps_results$pooled_results %>%
-          rename(
-            variable = term,
-            pooled_estimate = estimate,
-            pooled_se = se,
-            pooled_statistic = statistic,
-            pooled_p_value = p.value,
-            pooled_conf_low = ci_lower,
-            pooled_conf_high = ci_upper,
-            pooled_df = df,
-            pooled_fmi = fmi
-          )
+        # Check if columns need renaming or are already in the correct format
+        pooled_data <- cbps_results$pooled_results
+
+        # Check if 'term' column exists (needs renaming) or 'variable' exists (already renamed)
+        if ("term" %in% names(pooled_data)) {
+          pooled_data %>%
+            rename(
+              variable = term,
+              pooled_estimate = estimate,
+              pooled_se = se,
+              pooled_statistic = statistic,
+              pooled_p_value = p.value,
+              pooled_conf_low = ci_lower,
+              pooled_conf_high = ci_upper,
+              pooled_df = df,
+              pooled_fmi = fmi
+            )
+        } else {
+          # Already has correct column names
+          pooled_data
+        }
       } else {
         NULL
       }
@@ -199,7 +208,7 @@ extract_cbps_results <- function(cbps_results, include_balance_details = TRUE) {
 }
 
 
-#' Quick Results Summary for Visualization (UNCHANGED)
+#' Quick Results Summary for Visualization
 quick_results_summary <- function(cbps_results) {
   result <- extract_cbps_results(cbps_results, include_balance_details = FALSE)
 
