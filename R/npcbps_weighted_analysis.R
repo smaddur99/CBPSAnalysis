@@ -3,6 +3,20 @@
 #' Performs comprehensive Nonparametric Covariate Balancing Propensity Score (NPCBPS) weighted analysis
 #' with proper multiple imputation using Rubin's rules, plus bootstrap of a single GLM model.
 #'
+#' REVISION NOTES (changes from previous version):
+#' \itemize{
+#'   \item Balance metric now depends on treatment type. Binary treatments use the
+#'     absolute standardized mean difference (|SMD|) plus variance ratios (VR).
+#'     Continuous treatments use the absolute weighted treatment-covariate
+#'     correlation (|r|). Previously, balance checks looked only for SMD columns,
+#'     so continuous treatments were never checked against a threshold.
+#'   \item Balance is now collected from ALL imputations and summarized per
+#'     covariate (mean and maximum across imputations) in \code{balance_summary}.
+#'     Previously only the first imputation's balance table was returned.
+#'   \item Pooled standard errors now use robust (sandwich) variance estimates by
+#'     default. Previously, model-based \code{vcov()} from a weighted \code{glm()}
+#'     treated propensity weights as precision weights.
+#' }
 #'
 #' @param data A data frame containing the analysis variables
 #' @param outcome_var Character. Name of the outcome variable (y-variable)

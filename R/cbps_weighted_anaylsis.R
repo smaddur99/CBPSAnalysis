@@ -1,108 +1,84 @@
-#' CBPS Propensity Score Weighted GLM Analysis
+#' CBPS Propensity Score Weighted GLM Analysis with Proper Multiple Imputation
 #'
-#' Performs comprehensive Covariate Balancing Propensity Score (CBPS) weighted analysis
-#' with multiple imputation, balance assessment, and bootstrap confidence intervals.
+#' Performs parametric Covariate Balancing Propensity Score (CBPS) weighted analysis
+#' with proper multiple imputation (Rubin's rules), balance assessment appropriate to
+#' the treatment type, robust standard errors, and a bootstrap of one imputation's GLM.
 #'
 #' @param data A data frame containing the analysis variables
 #' @param outcome_var Character. Name of the outcome variable (y-variable)
 #' @param treatment_var Character. Name of the treatment variable (x-variable)
-#' @param additional_predictors Character vector. Additional fixed effects/random effects to include in the outcome model
+#' @param additional_predictors Character vector. Additional terms for the outcome model
 #' @param imputation_vars Character vector. Variables to impute missing values for
 #' @param imputation_predictors Character vector. Variables to help with imputation but not used in final model
 #' @param propensity_covariates Character vector. Variables to include in propensity weighting (in addition to imputed vars)
 #' @param mice_m Integer. Number of multiple imputations (default: 5)
-#' @param mice_method Character. MICE imputation method (default: "pmm" for Predictive Mean Matching)
+#' @param mice_method Character. MICE imputation method (default: "pmm")
 #' @param mice_seed Integer. Random seed for MICE imputation (default: 500)
-#' @param cbps_estimand Character. CBPS estimand: "ATE" (Average Treatment Effect) or "ATT" (Average Treatment on Treated) (default: "ATE")
-#' @param cbps_stop_method Character. Balance criteria for tuning (default: "es.mean")
-#' @param bootstrap_n Integer. Number of bootstrap samples (default: 1000)
+#' @param cbps_estimand Character. "ATE" or "ATT" (default: "ATE")
+#' @param cbps_stop_method Deprecated. Not used by CBPS; retained so existing calls don't break.
+#' @param bootstrap_n Integer. Number of bootstrap samples (default: 1000, 0 to skip)
 #' @param bootstrap_seed Integer. Random seed for bootstrap (default: 20250417)
-#' @param balance_threshold_m Numeric. Balance threshold for mean differences (default: 0.1)
-#' @param balance_threshold_v Numeric. Balance threshold for variance ratios (default: 2)
-#' @param family A family object specifying the error distribution and link function for GLM (default: gaussian())
-#' @param verbose Logical. Whether to print progress messages (default: TRUE)
+#' @param bootstrap_imputation Integer. Which imputation to bootstrap (default: 1)
+#' @param balance_threshold_m Numeric. |SMD| threshold, binary treatments (default: 0.1)
+#' @param balance_threshold_v Numeric. Variance ratio threshold; VR must fall in [1/v, v] (default: 2)
+#' @param balance_threshold_r Numeric. |r| threshold, continuous treatments (default: 0.1)
+#' @param robust_type Character. Sandwich SE type (default: "HC0")
+#' @param family GLM family (default: gaussian())
+#' @param verbose Logical. Print progress messages (default: TRUE)
 #'
 #' @return A list containing:
 #' \itemize{
-#'   \item \code{data}: Final analysis dataset with weights
-#'   \item \code{model}: Fitted weighted GLM model
-#'   \item \code{weights}: CBPS weight object from WeightIt
-#'   \item \code{balance}: Balance assessment from cobalt
-#'   \item \code{bootstrap_summary}: Bootstrap confidence intervals
-#'   \item \code{bootstrap_results}: Full bootstrap results matrix
-#'   \item \code{sample_sizes}: List with initial and final sample sizes
+#'   \item \code{data}, \code{model}, \code{weights}, \code{balance}: from imputation 1 (compatibility)
+#'   \item \code{bootstrap_summary}, \code{bootstrap_results}: bootstrap of the selected imputation's GLM
+#'   \item \code{pooled_results}: Rubin's rules pooled coefficients with robust SEs (PRIMARY RESULTS)
+#'   \item \code{imputation_results}: per-imputation data, weights, balance, model, robust vcov
+#'   \item \code{balance_summary}: balance summary for each imputation
+#'   \item \code{treatment_type}: "binary" or "continuous"
+#'   \item \code{sample_sizes}: initial and final sample sizes
 #' }
 #'
 #' @details
-#' This function implements a comprehensive workflow for CBPS analysis including:
+#' Workflow:
 #' \enumerate{
-#'   \item Data cleaning and missing data assessment
-#'   \item Multiple imputation using MICE with MCAR testing
-#'   \item CBPS propensity score estimation
-#'   \item Covariate balance assessment
-#'   \item Weighted GLM fitting
-#'   \item Bootstrap confidence intervals
+#'   \item Data cleaning and missing-data assessment (Little's MCAR test)
+#'   \item Multiple imputation with MICE; the m completed datasets are kept separate
+#'   \item For each imputation: estimate CBPS weights, assess balance, fit weighted GLM,
+#'     compute robust (sandwich) variance
+#'   \item Pool estimates with Rubin's rules (Barnard-Rubin small-sample df)
+#'   \item Bootstrap one imputation's GLM to examine the coefficient distribution
 #' }
 #'
-#' The function tests for Missing Completely At Random (MCAR) assumptions and provides
-#' warnings about potential Missing At Random (MAR) or Missing Not At Random (MNAR) scenarios.
+#' Balance statistics depend on treatment type. Binary treatments: |SMD| (primary) and
+#' variance ratio (secondary). Continuous treatments: absolute weighted treatment-covariate
+#' correlation |r|, because group-based statistics are undefined.
 #'
 #' @references
-#' Allison, P. (2015). Imputation by predictive mean matching: Promise & peril. Statistical Horizons.
-#'
 #' Austin, P. C. (2009). Balance diagnostics for comparing the distribution of baseline
 #' covariates between treatment groups in propensity-score matched samples. Statistics in Medicine, 28(25), 3083-107.
 #'
-#' Li, Y., & Li, L. (2021). Propensity score analysis methods with balancing constraints:
-#' A Monte Carlo study. Statistical Methods in Medical Research, 30(4), 1119-1142.
+#' Austin, P. C. (2019). Assessing covariate balance when using the generalized propensity
+#' score with quantitative or continuous exposures. Statistical Methods in Medical Research, 28(5), 1365-1377.
 #'
-#' @examples
-#' \dontrun{
-#' # Basic usage with continuous outcome (default gaussian family)
-#' results <- cbps_weighted_analysis(
-#'   data = my_data,
-#'   outcome_var = "weight_percentile",
-#'   treatment_var = "treatment_group",
-#'   additional_predictors = c("age", "gender"),
-#'   imputation_vars = c("mother_age", "gestational_age"),
-#'   verbose = TRUE
-#' )
+#' Barnard, J., & Rubin, D. B. (1999). Small-sample degrees of freedom with multiple imputation.
+#' Biometrika, 86(4), 948-955.
 #'
-#' # Binary outcome (e.g., preterm birth yes/no)
-#' results <- cbps_weighted_analysis(
-#'   data = my_data,
-#'   outcome_var = "preterm_birth",
-#'   treatment_var = "treatment_group",
-#'   additional_predictors = c("age", "gender"),
-#'   imputation_vars = c("mother_age", "gestational_age"),
-#'   family = binomial(),
-#'   verbose = TRUE
-#' )
+#' Fong, C., Hazlett, C., & Imai, K. (2018). Covariate balancing propensity score for a
+#' continuous treatment. The Annals of Applied Statistics, 12(1), 156-177.
 #'
-#' # With interaction terms
-#' results <- cbps_weighted_analysis(
-#'   data = my_data,
-#'   outcome_var = "outcome",
-#'   treatment_var = "treatment",
-#'   additional_predictors = c("var1", "var2", "var1*var2"),
-#'   imputation_vars = c("covariate1", "covariate2"),
-#'   verbose = TRUE
-#' )
+#' Imai, K., & Ratkovic, M. (2014). Covariate balancing propensity score.
+#' Journal of the Royal Statistical Society: Series B, 76(1), 243-263.
 #'
-#' # Access results
-#' summary(results$model)
-#' results$bootstrap_summary
-#' results$balance
-#' }
+#' Rubin, D. B. (1987). Multiple Imputation for Nonresponse in Surveys. Wiley.
 #'
 #' @export
-#' @importFrom dplyr select all_of filter if_all mutate bind_cols group_by summarise across rowwise ungroup row_number left_join
+#' @importFrom dplyr select all_of filter if_all mutate bind_cols summarise across everything
 #' @importFrom mice mice complete
-#' @importFrom purrr map
+#' @importFrom purrr map map_dfr
 #' @importFrom WeightIt weightit
 #' @importFrom cobalt bal.tab
 #' @importFrom tibble tibble
-#' @importFrom stats glm as.formula coef quantile sd
+#' @importFrom sandwich vcovHC
+#' @importFrom stats glm as.formula coef quantile sd vcov qt pt var na.omit
 cbps_weighted_analysis <- function(
     data,
     outcome_var,
@@ -115,122 +91,97 @@ cbps_weighted_analysis <- function(
     mice_method = "pmm",
     mice_seed = 500,
     cbps_estimand = "ATE",
-    cbps_stop_method = "es.mean",
+    cbps_stop_method = NULL,
     bootstrap_n = 1000,
     bootstrap_seed = 20250417,
+    bootstrap_imputation = 1,
     balance_threshold_m = 0.1,
     balance_threshold_v = 2,
+    balance_threshold_r = 0.1,
+    robust_type = "HC0",
     family = gaussian(),
     verbose = TRUE
 ) {
 
-  # Load required libraries
-  required_packages <- c("dplyr", "mice", "purrr", "WeightIt", "cobalt", "tibble")
+  required_packages <- c("dplyr", "mice", "purrr", "WeightIt", "cobalt", "tibble", "sandwich")
   for (pkg in required_packages) {
     if (!require(pkg, character.only = TRUE, quietly = TRUE)) {
       stop(paste("Package", pkg, "is required but not installed."))
     }
   }
 
-  # Handle NULL propensity_covariates
-  if (is.null(propensity_covariates)) {
-    propensity_covariates <- character(0)
+  if (!is.null(cbps_stop_method)) {
+    message("Note: cbps_stop_method is not used by CBPS and has been ignored.")
   }
 
-  if (verbose) cat("Starting CBPS weighted analysis...\n")
-  if (verbose) cat("DEBUG: Function version - FIXED interaction handling\n")
+  if (is.null(propensity_covariates)) propensity_covariates <- character(0)
 
-  # 1. DATA PREPARATION AND CLEANING
+  if (verbose) cat("Starting CBPS weighted analysis with proper MI...\n")
+
+  # 1. DATA PREPARATION AND CLEANING -------------------------------------------
   if (verbose) cat("Step 1: Preparing and cleaning data...\n")
 
-  # Function to extract variable names from formula terms
   extract_vars_from_formula <- function(terms) {
     all_vars <- character(0)
     for (term in terms) {
-      # Extract variables from interactions like "var1*var2" or "var1:var2"
-      vars <- unlist(strsplit(term, "[*:]"))
-      # Remove whitespace
-      vars <- trimws(vars)
+      vars <- trimws(unlist(strsplit(term, "[*:]")))
       all_vars <- c(all_vars, vars)
     }
-    return(unique(all_vars))
+    unique(all_vars)
   }
 
-  # Extract actual variable names from additional_predictors (handles interactions)
-  if (!is.null(additional_predictors)) {
-    actual_predictor_vars <- extract_vars_from_formula(additional_predictors)
+  actual_predictor_vars <- if (!is.null(additional_predictors)) {
+    extract_vars_from_formula(additional_predictors)
   } else {
-    actual_predictor_vars <- character(0)
+    character(0)
   }
 
-  if (verbose) {
-    cat("DEBUG: additional_predictors =", paste(additional_predictors, collapse = ", "), "\n")
-    cat("DEBUG: actual_predictor_vars =", paste(actual_predictor_vars, collapse = ", "), "\n")
-  }
-
-  # Build variable selection list using extracted variables
   all_vars <- c(outcome_var, treatment_var, actual_predictor_vars,
                 imputation_vars, imputation_predictors, propensity_covariates)
-
-  if (verbose) cat("DEBUG: all_vars =", paste(all_vars, collapse = ", "), "\n")
-
-  # Remove duplicates and empty strings
   all_vars <- unique(all_vars[all_vars != ""])
 
-  if (verbose) cat("DEBUG: all_vars after unique =", paste(all_vars, collapse = ", "), "\n")
-
-  # Select and clean data
   df_clean <- data %>%
-    dplyr::select(all_of(all_vars))
-
-  if (verbose) cat(paste("Sample size after variable selection:", nrow(df_clean), "\n"))
-
-  # Remove rows where key variables are missing
-  df_clean <- df_clean %>%
-    filter(
-      !is.na(.data[[outcome_var]]),
-      !is.na(.data[[treatment_var]])
-    )
+    dplyr::select(all_of(all_vars)) %>%
+    filter(!is.na(.data[[outcome_var]]), !is.na(.data[[treatment_var]]))
 
   if (verbose) cat(paste("Sample size after removing missing outcome/treatment:", nrow(df_clean), "\n"))
 
-  # Remove additional_predictors that are NA if specified
-  if (!is.null(additional_predictors)) {
-    # Use actual variable names (not interaction terms) for missing data check
-    for (var in actual_predictor_vars) {
-      if (var != treatment_var) {  # Don't double-check treatment var
-        n_before <- nrow(df_clean)
-        df_clean <- df_clean %>% filter(!is.na(.data[[var]]))
-        n_after <- nrow(df_clean)
-        if (verbose && n_before != n_after) {
-          cat(paste("Removed", n_before - n_after, "rows due to missing", var, "\n"))
-        }
-      }
+  for (var in setdiff(actual_predictor_vars, treatment_var)) {
+    n_before <- nrow(df_clean)
+    df_clean <- df_clean %>% filter(!is.na(.data[[var]]))
+    if (verbose && n_before != nrow(df_clean)) {
+      cat(paste("Removed", n_before - nrow(df_clean), "rows due to missing", var, "\n"))
     }
   }
 
   initial_n <- nrow(df_clean)
   if (verbose) cat(paste("Initial sample size after cleaning:", initial_n, "\n"))
 
-  # 2. MISSING DATA ANALYSIS
-  if (verbose) cat("Step 2: Analyzing missing data patterns and mechanisms...\n")
+  # Treatment type determines which balance statistic is valid
+  n_treat_levels <- length(unique(stats::na.omit(df_clean[[treatment_var]])))
+  if (n_treat_levels == 2) {
+    treatment_type <- "binary"
+  } else if (is.numeric(df_clean[[treatment_var]])) {
+    treatment_type <- "continuous"
+  } else {
+    stop("Treatment must be binary or numeric continuous; multi-category treatments are not supported.")
+  }
+  if (verbose) cat(paste("Treatment type detected:", treatment_type, "\n"))
 
-  # Prepare dataset for missing data analysis
+  # 2. MISSING DATA ANALYSIS -----------------------------------------------------
+  if (verbose) cat("Step 2: Analyzing missing data patterns...\n")
+
   missing_data_check <- df_clean %>%
     dplyr::select(dplyr::all_of(c(imputation_vars, imputation_predictors)))
 
-  # Load naniar if available for missing data analysis
   if (requireNamespace("naniar", quietly = TRUE)) {
-
-    # Check overall missingness
-    missing_summary <- missing_data_check %>%
-      naniar::miss_var_summary()
+    missing_summary <- naniar::miss_var_summary(missing_data_check)
 
     if (verbose && nrow(missing_summary) > 0) {
-      cat("  Missing data summary:\n")
       missing_vars <- missing_summary %>% dplyr::filter(as.numeric(n_miss) > 0)
       if (nrow(missing_vars) > 0) {
-        for (i in 1:nrow(missing_vars)) {
+        cat("  Missing data summary:\n")
+        for (i in seq_len(nrow(missing_vars))) {
           cat(paste("    ", as.character(missing_vars$variable[i]), ":",
                     as.numeric(missing_vars$n_miss[i]),
                     "missing (", round(as.numeric(missing_vars$pct_miss[i]), 1), "%)\n"))
@@ -240,398 +191,297 @@ cbps_weighted_analysis <- function(
       }
     }
 
-    # Test for MCAR (Missing Completely At Random)
     if (any(is.na(missing_data_check))) {
       tryCatch({
         mcar_result <- naniar::mcar_test(missing_data_check)
-
         if (verbose) {
-          cat("  Missing data mechanism test (MCAR):\n")
-          cat(paste("    Little's MCAR test p-value:", round(mcar_result$p.value, 4), "\n"))
-
+          cat(paste("  Little's MCAR test p-value:", round(mcar_result$p.value, 4), "\n"))
           if (mcar_result$p.value > 0.05) {
-            cat("     Data appears to be Missing Completely At Random (MCAR)\n")
-            cat("     Multiple imputation assumptions are well supported\n")
+            cat("    No evidence against MCAR (note: this does not prove MCAR)\n")
           } else if (mcar_result$p.value > 0.01) {
-            cat("    Marginal evidence against MCAR (p < 0.05 but > 0.01)\n")
-            cat("    Multiple imputation may still be appropriate, but consider MAR assumption\n")
-          } else {
-            warning("MISSING DATA WARNING: Strong evidence against MCAR assumption (p < 0.01)\n",
-                    "  Data may be Missing At Random (MAR) or Missing Not At Random (MNAR)\n",
-                    "   Multiple imputation assumes MAR - results may be biased if MNAR\n",
-                    "  Consider sensitivity analyses or alternative approaches",
-                    call. = FALSE)
+            cat("    Marginal evidence against MCAR; MI remains appropriate under MAR\n")
           }
         }
-
-        # Additional MAR vs MNAR assessment
-        if (verbose) {
-          cat("  Assessing MAR vs MNAR likelihood:\n")
-
-          # Check for extreme missingness percentages (potential MNAR indicator)
-          high_missing_vars <- missing_summary %>%
-            dplyr::filter(as.numeric(n_miss) > 0, as.numeric(pct_miss) > 50)
-
-          if (nrow(high_missing_vars) > 0) {
-            warning("POTENTIAL MNAR WARNING: Variables with >50% missing data detected:\n",
-                    paste("  ", as.character(high_missing_vars$variable), " (",
-                          round(as.numeric(high_missing_vars$pct_miss), 1), "% missing)", collapse = "\n"),
-                    "\n   High missingness may indicate Missing Not At Random (MNAR)",
-                    "\n   Consider whether missingness is related to unobserved values",
-                    "\n   Examples: income (high earners don't report), sensitive topics, etc.",
-                    call. = FALSE)
-          }
-
-          # Domain-specific MNAR warnings based on variable types
-          potentially_mnar_vars <- missing_summary %>%
-            dplyr::filter(as.numeric(n_miss) > 0) %>%
-            dplyr::filter(
-              grepl("income|salary|wage|earn", tolower(variable)) |
-                grepl("weight|bmi|height", tolower(variable)) |
-                grepl("age|birth", tolower(variable)) |
-                grepl("alcohol|smoke|drug", tolower(variable)) |
-                grepl("mental|depression|anxiety", tolower(variable))
-            )
-
-          if (nrow(potentially_mnar_vars) > 0) {
-            cat("     Variables with potential MNAR risk detected:\n")
-            for (i in 1:nrow(potentially_mnar_vars)) {
-              var_name <- as.character(potentially_mnar_vars$variable[i])
-              var_pct <- as.numeric(potentially_mnar_vars$pct_miss[i])
-
-              mnar_reason <- dplyr::case_when(
-                grepl("income|salary|wage|earn", tolower(var_name)) ~ "(high earners may not report)",
-                grepl("weight|bmi", tolower(var_name)) ~ "(individuals may not report high weights)",
-                grepl("age", tolower(var_name)) ~ "(older individuals may not report age)",
-                grepl("alcohol|smoke|drug", tolower(var_name)) ~ "(social desirability bias)",
-                grepl("mental|depression|anxiety", tolower(var_name)) ~ "(stigma-related non-response)",
-                TRUE ~ "(domain-specific non-response patterns)"
-              )
-
-              cat(paste("      ", var_name, " (", round(var_pct, 1), "% missing)", mnar_reason, "\n"))
-            }
-            cat("     Consider sensitivity analyses or domain expert consultation\n")
-            cat("     Alternative approaches: selection models, pattern-mixture models\n")
-          }
-
-          # Overall MAR vs MNAR assessment
-          total_missing_pct <- mean(as.numeric(missing_summary$pct_miss))
-          if (total_missing_pct > 20) {
-            cat("     Overall high missingness detected (", round(total_missing_pct, 1), "% average)\n")
-            cat("     Increased risk of MNAR mechanisms\n")
-            cat("     Strongly recommend sensitivity analyses\n")
-          } else if (mcar_result$p.value <= 0.05) {
-            cat("     Data likely Missing At Random (MAR) given MCAR test results\n")
-            cat("     Multiple imputation assumptions are reasonable\n")
-          } else {
-            cat("     Data appears consistent with MAR assumptions\n")
-            cat("    Multiple imputation is well-justified\n")
-          }
+        if (mcar_result$p.value <= 0.01) {
+          warning("Strong evidence against MCAR (p < 0.01). MI assumes MAR; ",
+                  "results may be biased if data are MNAR. Consider sensitivity analyses.",
+                  call. = FALSE)
         }
-
+        high_missing_vars <- missing_summary %>%
+          dplyr::filter(as.numeric(n_miss) > 0, as.numeric(pct_miss) > 50)
+        if (nrow(high_missing_vars) > 0) {
+          warning("Variables with >50% missing data: ",
+                  paste(as.character(high_missing_vars$variable), collapse = ", "),
+                  ". High missingness may indicate MNAR.", call. = FALSE)
+        }
       }, error = function(e) {
         if (verbose) cat("    Could not perform MCAR test:", e$message, "\n")
       })
-
-    } else {
-      if (verbose) cat("    No missing data detected in analysis variables\n")
     }
-
-  } else {
-    if (verbose) cat("    naniar package not available - skipping detailed missing data analysis\n")
+  } else if (verbose) {
+    cat("    naniar not available - skipping missing data analysis\n")
   }
 
-  # 3. IMPUTATION
-  if (verbose) cat("Step 3: Performing multiple imputation...\n")
+  # 3. MULTIPLE IMPUTATION (datasets kept separate - NOT averaged) ---------------
+  if (verbose) cat("Step 3: Multiple imputation...\n")
 
-  # Prepare imputation dataset - include imputation vars AND predictors for better imputation
   imputation_dataset <- df_clean %>%
-    dplyr::select(all_of(c(imputation_vars, imputation_predictors))) %>%
-    dplyr::mutate(row_id = row_number())
+    dplyr::select(all_of(c(imputation_vars, imputation_predictors)))
 
-  # Check if imputation is needed
-  if (any(is.na(imputation_dataset %>% dplyr::select(all_of(imputation_vars))))) {
-    # Perform MICE imputation using both target vars and predictors
+  imputation_needed <- any(is.na(imputation_dataset %>% dplyr::select(all_of(imputation_vars))))
+
+  if (imputation_needed) {
     set.seed(mice_seed)
-    imputed_data <- mice(imputation_dataset %>% dplyr::select(-row_id),
-                         m = mice_m, method = mice_method,
+    imputed_data <- mice(imputation_dataset, m = mice_m, method = mice_method,
                          seed = mice_seed, printFlag = FALSE)
-
-    # Process imputed data - only extract the imputation target variables
-    completed_list <- map(1:mice_m, ~complete(imputed_data, .x) %>%
-                            mutate(.imp = .x))
-
-    # Stack and average imputations - only for the target imputation variables
-    long_imputed <- bind_rows(completed_list) %>%
-      mutate(row_id = rep(1:nrow(imputation_dataset), mice_m)) %>%
-      dplyr::select(.imp, row_id, all_of(imputation_vars))
-
-    # Average across imputations for target variables only
-    avg_imputations <- long_imputed %>%
-      group_by(row_id) %>%
-      summarise(
-        across(all_of(imputation_vars), ~ mean(.x, na.rm = TRUE),
-               .names = "{.col}_imp"),
-        .groups = "drop"
-      )
-
-    # Join back and replace missing values in target variables only
-    df_imp_final <- imputation_dataset %>%
-      left_join(avg_imputations, by = "row_id") %>%
-      rowwise() %>%
-      mutate(
-        across(all_of(imputation_vars), ~ ifelse(is.na(.x),
-                                                 get(paste0(cur_column(), "_imp")), .x))
-      ) %>%
-      ungroup() %>%
-      dplyr::select(all_of(imputation_vars))  # Only keep the imputed target variables
-
-    if (verbose) cat("Imputation completed.\n")
+    imputed_datasets <- map(seq_len(mice_m), ~ complete(imputed_data, .x) %>%
+                              dplyr::select(all_of(imputation_vars)))
+    if (verbose) cat("  Created", mice_m, "imputed datasets\n")
   } else {
-    df_imp_final <- imputation_dataset %>% dplyr::select(all_of(imputation_vars))
-    if (verbose) cat("No missing data found in target variables - skipping imputation.\n")
+    # No missing data: a single analysis; Rubin's rules reduce to that analysis
+    imputed_datasets <- list(imputation_dataset %>% dplyr::select(all_of(imputation_vars)))
+    if (verbose) cat("  No missing data - running a single complete-data analysis\n")
   }
 
-  # 4. COMBINE DATA
-  if (verbose) cat("Step 4: Combining imputed and original data...\n")
+  # 4. ANALYZE EACH IMPUTATION ------------------------------------------------------
+  if (verbose) cat("Step 4: Analyzing each imputed dataset...\n")
 
   outcome_treatment_data <- df_clean %>%
-    dplyr::select(all_of(c(outcome_var, treatment_var, actual_predictor_vars)))
+    dplyr::select(all_of(unique(c(outcome_var, treatment_var, actual_predictor_vars))))
 
-  df_final <- bind_cols(outcome_treatment_data, df_imp_final)
-
-  # Build formula for propensity score model - only imputed vars + any additional propensity covariates
-  ps_covariate_vars <- c(imputation_vars, propensity_covariates)
+  ps_covariate_vars <- unique(c(imputation_vars, propensity_covariates))
   ps_formula <- as.formula(paste(treatment_var, "~", paste(ps_covariate_vars, collapse = " + ")))
 
-  # Check for any remaining missing values in final covariates for propensity model
-  missing_check <- df_final %>%
-    dplyr::select(all_of(ps_covariate_vars)) %>%
-    summarise(across(everything(), ~sum(is.na(.x))))
+  outcome_formula <- as.formula(paste(outcome_var, "~",
+                                      paste(c(treatment_var, additional_predictors), collapse = " + ")))
 
-  if (any(missing_check > 0)) {
-    if (verbose) {
-      cat("Warning: Missing values detected in covariates after imputation:\n")
-      missing_vars <- names(missing_check)[missing_check > 0]
-      for (var in missing_vars) {
-        cat(paste("  ", var, ":", missing_check[[var]], "missing values\n"))
-      }
-      cat("Removing rows with missing covariate values...\n")
-    }
-
-    # Remove rows with any missing covariates
-    df_final <- df_final %>%
-      filter(if_all(all_of(ps_covariate_vars), ~!is.na(.x)))
-
-    if (verbose) cat(paste("Sample size after removing missing covariates:", nrow(df_final), "\n"))
-  }
-
-  # 5. PROPENSITY SCORE WEIGHTING
-  if (verbose) cat("Step 5: Computing CBPS propensity scores...\n")
-
-  cbps_weights <- WeightIt::weightit(
-    ps_formula,
-    data = df_final,
-    method = "cbps",
-    estimand = cbps_estimand,
-    stop.method = cbps_stop_method
-  )
-
-  # 6. BALANCE ASSESSMENT
-  if (verbose) cat("Step 6: Assessing covariate balance...\n")
-
-  balance_table <- bal.tab(cbps_weights, treat = treatment_var, method = "weighting",
-                           m.threshold = balance_threshold_m, v.threshold = balance_threshold_v)
-
-  # Check balance and provide warnings
-  if ("Balance" %in% names(balance_table)) {
-    balance_df <- as.data.frame(balance_table$Balance)
-
-    # Check for standardized mean differences - try different column names
-    diff_col <- NULL
-    if ("Diff.Adj" %in% names(balance_df)) {
-      diff_col <- "Diff.Adj"
-    } else if ("Diff.Target.Adj" %in% names(balance_df)) {
-      diff_col <- "Diff.Target.Adj"
-    }
-
-    if (!is.null(diff_col)) {
-      max_std_diff <- max(abs(balance_df[[diff_col]]), na.rm = TRUE)
-      mean_std_diff <- mean(abs(balance_df[[diff_col]]), na.rm = TRUE)
-      unbalanced_vars <- rownames(balance_df)[abs(balance_df[[diff_col]]) > balance_threshold_m]
-
-      if (verbose) {
-        cat("Balance Assessment:\n")
-        cat(paste("  Maximum absolute standardized difference:", round(max_std_diff, 3), "\n"))
-        cat(paste("  Mean absolute standardized difference:", round(mean_std_diff, 3), "\n"))
-        cat(paste("  Variables above threshold:", length(unbalanced_vars), "out of", nrow(balance_df), "\n"))
-      }
-
-      # Warning for poor balance
-      if (max_std_diff > balance_threshold_m) {
-        warning(paste("WARNING: Poor covariate balance detected!",
-                      "\n  Maximum standardized difference:", round(max_std_diff, 3),
-                      "(threshold:", balance_threshold_m, ")",
-                      "\n  Variables with poor balance:", paste(unbalanced_vars, collapse = ", "),
-                      "\n  Consider different propensity score method or additional covariates."),
-                call. = FALSE)
-      } else {
-        if (verbose) cat("Good covariate balance achieved (all variables < threshold)\n")
-      }
-
-      # Additional warning for very poor balance
-      if (max_std_diff > 0.25) {
-        warning(paste("SEVERE WARNING: Very poor covariate balance detected!",
-                      "\n  Maximum standardized difference:", round(max_std_diff, 3),
-                      "\n  Results may be unreliable. Consider:",
-                      "\n  - Adding more covariates to propensity model",
-                      "\n  - Using different weighting method",
-                      "\n  - Checking for overlap in propensity scores"),
-                call. = FALSE)
-      }
-    } else {
-      if (verbose) cat("Could not find standardized difference column in balance table\n")
-    }
-
-    # Check variance ratios if available
-    if ("V.Ratio.Adj" %in% names(balance_df)) {
-      extreme_var_ratios <- rownames(balance_df)[balance_df$V.Ratio.Adj > balance_threshold_v |
-                                                   balance_df$V.Ratio.Adj < (1/balance_threshold_v)]
-
-      if (length(extreme_var_ratios) > 0) {
-        warning(paste("WARNING: Extreme variance ratios detected for variables:",
-                      paste(extreme_var_ratios, collapse = ", "),
-                      "\n  This suggests poor balance in variable distributions."),
-                call. = FALSE)
-      }
-    }
+  # Balance thresholds and statistic by treatment type
+  if (treatment_type == "binary") {
+    bal_thresholds <- c(m = balance_threshold_m, v = balance_threshold_v)
+    stat_col <- "Diff.Adj"
+    stat_threshold <- balance_threshold_m
+    stat_label <- "|SMD|"
   } else {
-    if (verbose) cat("Balance table structure not recognized - skipping balance warnings\n")
+    bal_thresholds <- c(cor = balance_threshold_r)
+    stat_col <- "Corr.Adj"
+    stat_threshold <- balance_threshold_r
+    stat_label <- "|r|"
   }
 
-  # 7. WEIGHTED GLM
-  if (verbose) cat("Step 7: Fitting weighted GLM...\n")
+  check_balance <- function(balance_table, imp) {
+    if (!("Balance" %in% names(balance_table))) return(NULL)
+    bdf <- as.data.frame(balance_table$Balance)
+    if (!(stat_col %in% names(bdf))) {
+      warning(paste("Imputation", imp, ": balance column", stat_col, "not found"), call. = FALSE)
+      return(NULL)
+    }
+    stat <- abs(bdf[[stat_col]])
+    unbalanced <- rownames(bdf)[!is.na(stat) & stat >= stat_threshold]
 
-  # Build outcome model formula
-  predictor_vars <- c(treatment_var, additional_predictors)
-  outcome_formula <- as.formula(paste(outcome_var, "~", paste(predictor_vars, collapse = " + ")))
+    vr_outside <- character(0)
+    if (treatment_type == "binary" && "V.Ratio.Adj" %in% names(bdf)) {
+      vr <- bdf$V.Ratio.Adj
+      vr_outside <- rownames(bdf)[!is.na(vr) & (vr > balance_threshold_v | vr < 1 / balance_threshold_v)]
+    }
 
-  if (verbose) {
-    cat("DEBUG: Outcome formula:", deparse(outcome_formula), "\n")
-    cat("DEBUG: GLM family:", family$family, "with", family$link, "link\n")
+    if (verbose) {
+      cat(paste0("    Balance (", stat_label, "): max = ", round(max(stat, na.rm = TRUE), 4),
+                 ", mean = ", round(mean(stat, na.rm = TRUE), 4),
+                 ", above threshold = ", length(unbalanced), " of ", nrow(bdf), "\n"))
+    }
+    if (length(unbalanced) > 0) {
+      warning(paste0("Imputation ", imp, ": ", stat_label, " >= ", stat_threshold,
+                     " for: ", paste(unbalanced, collapse = ", ")), call. = FALSE)
+    }
+    if (treatment_type == "binary" && max(stat, na.rm = TRUE) > 0.25) {
+      warning(paste("Imputation", imp, ": severe imbalance (|SMD| > 0.25). Results may be unreliable."),
+              call. = FALSE)
+    }
+    if (length(vr_outside) > 0) {
+      warning(paste0("Imputation ", imp, ": variance ratio outside [", 1 / balance_threshold_v, ", ",
+                     balance_threshold_v, "] for: ", paste(vr_outside, collapse = ", ")), call. = FALSE)
+    }
+
+    tibble(
+      imputation = imp,
+      statistic = stat_label,
+      max_abs_stat = max(stat, na.rm = TRUE),
+      mean_abs_stat = mean(stat, na.rm = TRUE),
+      n_above_threshold = length(unbalanced),
+      n_vr_outside = length(vr_outside)
+    )
   }
 
-  weighted_model <- glm(outcome_formula,
-                        data = df_final,
-                        weights = cbps_weights$weights,
-                        family = family)
+  imputation_results <- vector("list", length(imputed_datasets))
 
-  # CRITICAL FIX: Get the actual coefficient names from the fitted model
-  # This handles interaction terms correctly (e.g., "var1*var2" becomes "var1:var2")
-  model_coef_names <- names(coef(weighted_model))
+  for (imp in seq_along(imputed_datasets)) {
+    if (verbose) cat(paste("  Imputation", imp, "of", length(imputed_datasets), "\n"))
 
-  # Exclude intercept for bootstrap
-  model_coef_names_no_intercept <- model_coef_names[model_coef_names != "(Intercept)"]
+    df_imp <- bind_cols(outcome_treatment_data, imputed_datasets[[imp]])
+    df_imp <- df_imp %>% filter(if_all(all_of(ps_covariate_vars), ~ !is.na(.x)))
 
-  if (verbose) {
-    cat("DEBUG: Model coefficient names:", paste(model_coef_names, collapse = ", "), "\n")
-    cat("DEBUG: Coefficients for bootstrap:", paste(model_coef_names_no_intercept, collapse = ", "), "\n")
-  }
+    imputation_results[[imp]] <- tryCatch({
+      cbps_w <- WeightIt::weightit(ps_formula, data = df_imp,
+                                   method = "cbps", estimand = cbps_estimand)
 
-  # 8. BOOTSTRAPPING (Robust version with FIXED coefficient extraction)
-  if (verbose) cat("Step 8: Performing bootstrap analysis...\n")
+      balance_table <- bal.tab(cbps_w, thresholds = bal_thresholds)
+      balance_check <- check_balance(balance_table, imp)
 
-  boot_data <- df_final %>%
-    mutate(weight = cbps_weights$weights)
+      weighted_model <- glm(outcome_formula, data = df_imp,
+                            weights = cbps_w$weights, family = family)
 
-  set.seed(bootstrap_seed)
+      # Robust (sandwich) variance: model-based glm SEs are invalid with PS weights
+      robust_vcov <- sandwich::vcovHC(weighted_model, type = robust_type)
 
-  # Robust bootstrap function with error handling and FIXED coefficient extraction
-  boot_fun <- function(data, indices) {
-    tryCatch({
-      d <- data[indices, ]
-
-      # Check if bootstrap sample has sufficient variation
-      if (length(unique(d[[treatment_var]])) < 2) {
-        return(rep(NA, length(model_coef_names_no_intercept)))
-      }
-
-      model <- glm(outcome_formula, data = d, weights = weight, family = family)
-
-      # Check if model converged
-      if (!model$converged) {
-        return(rep(NA, length(model_coef_names_no_intercept)))
-      }
-
-      coeffs <- coef(model)
-
-      # CRITICAL FIX: Extract coefficients using the actual model coefficient names
-      result <- coeffs[model_coef_names_no_intercept]
-
-      # Ensure we return the right length vector
-      if (length(result) != length(model_coef_names_no_intercept)) {
-        return(rep(NA, length(model_coef_names_no_intercept)))
-      }
-
-      return(as.numeric(result))
-
+      list(
+        data = df_imp,
+        weights = cbps_w,
+        balance = balance_table,
+        balance_check = balance_check,
+        model = weighted_model,
+        coefficients = coef(weighted_model),
+        vcov = robust_vcov,
+        n = nrow(df_imp)
+      )
     }, error = function(e) {
-      return(rep(NA, length(model_coef_names_no_intercept)))
+      warning(paste("Error in imputation", imp, ":", e$message), call. = FALSE)
+      NULL
     })
   }
 
-  # Run bootstrap with better error handling
-  boot_results <- replicate(bootstrap_n, {
-    sample_idx <- sample(1:nrow(boot_data), replace = TRUE)
-    boot_fun(boot_data, sample_idx)
-  }, simplify = FALSE)
-
-  # Convert to matrix and handle failures
-  boot_matrix <- do.call(cbind, boot_results)
-  rownames(boot_matrix) <- model_coef_names_no_intercept
-
-  # Check if we have any successful bootstrap samples
-  successful_boots <- apply(boot_matrix, 2, function(x) !all(is.na(x)))
-  n_successful <- sum(successful_boots)
-
-  if (verbose) cat(paste("Successful bootstrap samples:", n_successful, "out of", bootstrap_n, "\n"))
-
-  if (n_successful < 10) {
-    warning("Very few successful bootstrap samples (", n_successful, "). Results may be unreliable.")
+  imputation_results <- imputation_results[!vapply(imputation_results, is.null, logical(1))]
+  m <- length(imputation_results)
+  if (m == 0) stop("All imputations failed. Cannot proceed with analysis.")
+  if (imputation_needed && m < mice_m) {
+    warning(paste("Only", m, "of", mice_m, "imputations succeeded"), call. = FALSE)
   }
 
-  # Calculate bootstrap summary only from successful samples
-  if (n_successful > 0) {
-    boot_summary <- tibble(
-      term = model_coef_names_no_intercept,
-      estimate = rowMeans(boot_matrix[, successful_boots, drop = FALSE], na.rm = TRUE),
-      se = apply(boot_matrix[, successful_boots, drop = FALSE], 1, sd, na.rm = TRUE),
-      ci_lower = apply(boot_matrix[, successful_boots, drop = FALSE], 1, quantile, probs = 0.025, na.rm = TRUE),
-      ci_upper = apply(boot_matrix[, successful_boots, drop = FALSE], 1, quantile, probs = 0.975, na.rm = TRUE)
-    )
-  } else {
-    # Fallback if no bootstrap samples succeeded
-    warning("No successful bootstrap samples. Using GLM standard errors.")
-    boot_summary <- tibble(
-      term = model_coef_names_no_intercept,
-      estimate = coef(weighted_model)[model_coef_names_no_intercept],
-      se = summary(weighted_model)$coefficients[model_coef_names_no_intercept, "Std. Error"],
-      ci_lower = NA_real_,
-      ci_upper = NA_real_
-    )
+  # 5. POOL WITH RUBIN'S RULES (robust SEs) -------------------------------------------
+  if (verbose) cat("Step 5: Pooling results with Rubin's rules...\n")
+
+  coef_names <- names(imputation_results[[1]]$coefficients)
+  Q_m <- do.call(cbind, lapply(imputation_results, function(x) x$coefficients[coef_names]))
+  U_m <- do.call(cbind, lapply(imputation_results, function(x) diag(x$vcov)[coef_names]))
+  rownames(Q_m) <- rownames(U_m) <- coef_names
+
+  Q_bar <- rowMeans(Q_m)
+  U_bar <- rowMeans(U_m)
+  B <- if (m > 1) apply(Q_m, 1, stats::var) else rep(0, length(Q_bar))
+  T_var <- U_bar + (1 + 1 / m) * B
+  SE <- sqrt(T_var)
+
+  # Barnard-Rubin degrees of freedom (handles B = 0, e.g., no missing data)
+  lambda <- ((1 + 1 / m) * B) / T_var
+  df_obs <- imputation_results[[1]]$model$df.residual
+  df_adj <- (df_obs + 1) / (df_obs + 3) * df_obs * (1 - lambda)
+  df_old <- ifelse(lambda > 0, (m - 1) / lambda^2, Inf)
+  df <- ifelse(is.finite(df_old), (df_old * df_adj) / (df_old + df_adj), df_adj)
+
+  t_stat <- Q_bar / SE
+  crit <- qt(0.975, df)
+  r_ratio <- ((1 + 1 / m) * B) / U_bar
+  FMI <- (r_ratio + 2 / (df + 3)) / (r_ratio + 1)
+
+  pooled_results <- tibble(
+    term = coef_names,
+    estimate = Q_bar,
+    se = SE,
+    statistic = t_stat,
+    p.value = 2 * pt(abs(t_stat), df, lower.tail = FALSE),
+    ci_lower = Q_bar - crit * SE,
+    ci_upper = Q_bar + crit * SE,
+    df = df,
+    fmi = FMI,
+    within_var = U_bar,
+    between_var = B,
+    total_var = T_var,
+    se_type = paste0("robust_", robust_type)
+  )
+
+  if (verbose) {
+    cat("\nPooled results (Rubin's rules, robust SEs) - m =", m, "\n")
+    print(pooled_results %>%
+            dplyr::select(term, estimate, se, ci_lower, ci_upper, p.value, fmi) %>%
+            dplyr::filter(term != "(Intercept)"), digits = 4)
   }
 
-  final_n <- nrow(df_final)
-  if (verbose) cat(paste("Analysis completed. Final sample size:", final_n, "\n"))
+  # 6. BOOTSTRAP ONE IMPUTATION'S GLM ----------------------------------------------------
+  bootstrap_summary <- NULL
+  bootstrap_results <- NULL
+  coef_no_int <- coef_names[coef_names != "(Intercept)"]
 
-  # 9. RETURN RESULTS
-  return(list(
-    data = df_final,
-    model = weighted_model,
-    weights = cbps_weights,
-    balance = balance_table,
-    bootstrap_summary = boot_summary,
-    bootstrap_results = boot_matrix,
-    sample_sizes = list(initial = initial_n, final = final_n)
-  ))
+  if (bootstrap_n > 0) {
+    boot_imp <- min(bootstrap_imputation, m)
+    if (verbose) cat("\nStep 6: Bootstrapping GLM from imputation", boot_imp, "...\n")
+
+    boot_data <- imputation_results[[boot_imp]]$data %>%
+      mutate(weight = imputation_results[[boot_imp]]$weights$weights)
+
+    set.seed(bootstrap_seed)
+
+    boot_fun <- function(d) {
+      tryCatch({
+        if (length(unique(d[[treatment_var]])) < 2) return(rep(NA_real_, length(coef_no_int)))
+        fit <- glm(outcome_formula, data = d, weights = weight, family = family)
+        if (!fit$converged) return(rep(NA_real_, length(coef_no_int)))
+        as.numeric(coef(fit)[coef_no_int])
+      }, error = function(e) rep(NA_real_, length(coef_no_int)))
+    }
+
+    boot_list <- replicate(bootstrap_n, {
+      boot_fun(boot_data[sample(seq_len(nrow(boot_data)), replace = TRUE), ])
+    }, simplify = FALSE)
+
+    boot_matrix <- do.call(cbind, boot_list)
+    rownames(boot_matrix) <- coef_no_int
+    ok <- apply(boot_matrix, 2, function(x) !all(is.na(x)))
+
+    if (verbose) cat(paste("Successful bootstrap samples:", sum(ok), "out of", bootstrap_n, "\n"))
+    if (sum(ok) < 10) warning("Very few successful bootstrap samples (", sum(ok), ").", call. = FALSE)
+
+    if (sum(ok) > 0) {
+      bm <- boot_matrix[, ok, drop = FALSE]
+      bootstrap_summary <- tibble(
+        term = coef_no_int,
+        estimate = rowMeans(bm, na.rm = TRUE),
+        se = apply(bm, 1, sd, na.rm = TRUE),
+        ci_lower = apply(bm, 1, quantile, probs = 0.025, na.rm = TRUE),
+        ci_upper = apply(bm, 1, quantile, probs = 0.975, na.rm = TRUE)
+      )
+    }
+    bootstrap_results <- boot_matrix
+  }
+
+  # 7. BALANCE SUMMARY ACROSS IMPUTATIONS ----------------------------------------------
+  balance_summary <- map_dfr(imputation_results, "balance_check")
+
+  if (verbose && nrow(balance_summary) > 0) {
+    cat(paste0("\nBalance across imputations (", stat_label, "): worst max = ",
+               round(max(balance_summary$max_abs_stat), 4),
+               ", average mean = ", round(mean(balance_summary$mean_abs_stat), 4), "\n"))
+  }
+  if (nrow(balance_summary) > 0 && any(balance_summary$n_above_threshold > 0)) {
+    warning("Imbalance detected in one or more imputations", call. = FALSE)
+  }
+
+  final_n <- stats::median(vapply(imputation_results, function(x) x$n, numeric(1)))
+  if (verbose) cat(paste("\nAnalysis completed. Median sample size across imputations:", final_n, "\n"))
+
+  # 8. RETURN -------------------------------------------------------------------------------
+  list(
+    data = imputation_results[[1]]$data,
+    model = imputation_results[[1]]$model,
+    weights = imputation_results[[1]]$weights,
+    balance = imputation_results[[1]]$balance,
+    bootstrap_summary = bootstrap_summary,
+    bootstrap_results = bootstrap_results,
+    sample_sizes = list(initial = initial_n, final = final_n),
+    pooled_results = pooled_results,
+    imputation_results = imputation_results,
+    balance_summary = balance_summary,
+    treatment_type = treatment_type,
+    n_imputations = m,
+    n_bootstraps = bootstrap_n,
+    bootstrap_imputation_used = if (bootstrap_n > 0) min(bootstrap_imputation, m) else NA
+  )
 }
