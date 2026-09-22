@@ -3,6 +3,7 @@
 #' Performs comprehensive Nonparametric Covariate Balancing Propensity Score (NPCBPS) weighted analysis
 #' with proper multiple imputation using Rubin's rules, plus bootstrap of a single GLM model.
 #'
+#'
 #' @param data A data frame containing the analysis variables
 #' @param outcome_var Character. Name of the outcome variable (y-variable)
 #' @param treatment_var Character. Name of the treatment variable (x-variable)
@@ -17,8 +18,12 @@
 #' @param bootstrap_n Integer. Number of bootstrap samples for the GLM (default: 1000, set to 0 to skip)
 #' @param bootstrap_seed Integer. Random seed for bootstrap (default: 20250417)
 #' @param bootstrap_imputation Integer. Which imputation to use for bootstrap (default: 1 = first imputation)
-#' @param balance_threshold_m Numeric. Balance threshold for mean differences (default: 0.1)
-#' @param balance_threshold_v Numeric. Balance threshold for variance ratios (default: 2)
+#' @param balance_threshold_m Numeric. |SMD| threshold for binary treatments (default: 0.1)
+#' @param balance_threshold_v Numeric. Variance ratio threshold for binary treatments; VRs outside
+#'   \code{[1/balance_threshold_v, balance_threshold_v]} are flagged (default: 2, i.e. 0.5 to 2)
+#' @param balance_threshold_r Numeric. |r| threshold for continuous treatments (default: 0.1)
+#' @param robust_se Logical. Use robust (sandwich) standard errors for pooling (default: TRUE)
+#' @param se_type Character. Sandwich estimator type passed to \code{sandwich::vcovHC} (default: "HC0")
 #' @param family A family object specifying the error distribution and link function for GLM (default: gaussian())
 #' @param verbose Logical. Whether to print progress messages (default: TRUE)
 #'
@@ -27,12 +32,14 @@
 #'   \item \code{data}: Final analysis dataset from first imputation (for compatibility)
 #'   \item \code{model}: Fitted weighted GLM model from first imputation (for compatibility)
 #'   \item \code{weights}: NPCBPS weight object from first imputation (for compatibility)
-#'   \item \code{balance}: Balance assessment from first imputation (for compatibility)
+#'   \item \code{balance}: cobalt balance table from first imputation (for compatibility)
+#'   \item \code{balance_by_imputation}: Long table of balance statistics for every covariate in every imputation
+#'   \item \code{balance_summary}: Per-covariate balance summarized across imputations (USE THIS FOR REPORTING)
+#'   \item \code{treatment_type}: "binary" or "continuous"
 #'   \item \code{bootstrap_summary}: Bootstrap CIs from the selected imputation's GLM
 #'   \item \code{bootstrap_results}: Bootstrap distribution matrix from the selected imputation's GLM
 #'   \item \code{pooled_results}: Rubin's rules pooled coefficients (PRIMARY RESULTS)
 #'   \item \code{imputation_results}: List of results from each imputation
-#'   \item \code{balance_summary}: Summary of balance across imputations
 #'   \item \code{sample_sizes}: List with initial and final sample sizes
 #' }
 #'
@@ -45,27 +52,35 @@
 #'     \itemize{
 #'       \item Estimate Nonparametric CBPS propensity scores
 #'       \item Assess covariate balance
-#'       \item Fit weighted GLM
+#'       \item Fit weighted GLM with robust standard errors
 #'     }
+#'   \item Summarize balance across all imputations
 #'   \item Pool results using Rubin's rules (PRIMARY inference)
 #'   \item Bootstrap ONE of the fitted GLM models to examine distribution
 #' }
 #'
-#' The bootstrap provides the distribution of coefficients for a single imputation's model,
-#' while Rubin's rules provides the primary inference accounting for imputation uncertainty.
+#' Balance metrics by treatment type:
+#' \itemize{
+#'   \item Binary treatment: |SMD| < balance_threshold_m (primary) and VR within
+#'     [1/balance_threshold_v, balance_threshold_v] (secondary). Note that cobalt reports
+#'     raw differences in proportions (not SMDs) for binary covariates, and VRs are
+#'     not defined for binary covariates.
+#'   \item Continuous treatment: |r| < balance_threshold_r, where r is the weighted
+#'     Pearson correlation between treatment and each covariate.
+#' }
 #'
-#' The nonparametric CBPS method uses kernel-based estimation and does not assume
-#' a parametric form for the propensity score model. This can be more flexible than
-#' parametric CBPS but may require larger sample sizes.
-#'
-#' The function tests for Missing Completely At Random (MCAR) assumptions and provides
-#' warnings about potential Missing At Random (MAR) or Missing Not At Random (MNAR) scenarios.
+#' Robust standard errors treat the estimated weights as fixed. They correct the
+#' main problem with model-based GLM standard errors under propensity weighting,
+#' but do not account for uncertainty in estimating the weights themselves.
 #'
 #' @references
 #' Allison, P. (2015). Imputation by predictive mean matching: Promise & peril. Statistical Horizons.
 #'
 #' Austin, P. C. (2009). Balance diagnostics for comparing the distribution of baseline
 #' covariates between treatment groups in propensity-score matched samples. Statistics in Medicine, 28(25), 3083-107.
+#'
+#' Austin, P. C. (2019). Assessing covariate balance when using the generalized propensity
+#' score with quantitative or continuous exposures. Statistical Methods in Medical Research, 28(5), 1365-1377.
 #'
 #' Barnard, J., & Rubin, D. B. (1999). Small-sample degrees of freedom with multiple imputation.
 #' Biometrika, 86(4), 948-955.
@@ -80,7 +95,6 @@
 #'
 #' @examples
 #' \dontrun{
-#' # Basic usage with continuous outcome (default gaussian family)
 #' results <- npcbps_weighted_analysis(
 #'   data = my_data,
 #'   outcome_var = "weight_percentile",
@@ -90,40 +104,19 @@
 #'   verbose = TRUE
 #' )
 #'
-#' # Binary outcome (e.g., preterm birth yes/no)
-#' results <- npcbps_weighted_analysis(
-#'   data = my_data,
-#'   outcome_var = "preterm_birth",
-#'   treatment_var = "treatment_group",
-#'   additional_predictors = c("age", "gender"),
-#'   imputation_vars = c("mother_age", "gestational_age"),
-#'   family = binomial(),
-#'   verbose = TRUE
-#' )
-#'
-#' # With interaction terms
-#' results <- npcbps_weighted_analysis(
-#'   data = my_data,
-#'   outcome_var = "outcome",
-#'   treatment_var = "treatment",
-#'   additional_predictors = c("var1", "var2", "var1*var2"),
-#'   imputation_vars = c("covariate1", "covariate2"),
-#'   verbose = TRUE
-#' )
-#'
-#' # Access results
-#' results$pooled_results  # PRIMARY - Rubin's rules
-#' results$bootstrap_summary  # Bootstrap distribution of one GLM
-#' results$balance
+#' results$pooled_results         # PRIMARY - Rubin's rules with robust SEs
+#' results$balance_summary        # Balance across all imputations (for tables)
+#' results$balance_by_imputation  # Full per-imputation detail
 #' }
 #'
 #' @export
-#' @importFrom dplyr select all_of filter if_all mutate bind_cols summarise across everything
+#' @importFrom dplyr select all_of filter if_all mutate bind_cols bind_rows summarise across everything group_by case_when if_else n
 #' @importFrom mice mice complete
 #' @importFrom purrr map map_dfr
 #' @importFrom WeightIt weightit
 #' @importFrom cobalt bal.tab
 #' @importFrom tibble tibble
+#' @importFrom sandwich vcovHC
 #' @importFrom stats glm as.formula coef quantile sd vcov qt pt var
 npcbps_weighted_analysis <- function(
     data,
@@ -142,12 +135,16 @@ npcbps_weighted_analysis <- function(
     bootstrap_imputation = 1,
     balance_threshold_m = 0.1,
     balance_threshold_v = 2,
+    balance_threshold_r = 0.1,
+    robust_se = TRUE,
+    se_type = "HC0",
     family = gaussian(),
     verbose = TRUE
 ) {
 
   # Load required libraries
   required_packages <- c("dplyr", "mice", "purrr", "WeightIt", "cobalt", "tibble")
+  if (robust_se) required_packages <- c(required_packages, "sandwich")
   for (pkg in required_packages) {
     if (!require(pkg, character.only = TRUE, quietly = TRUE)) {
       stop(paste("Package", pkg, "is required but not installed."))
@@ -230,6 +227,32 @@ npcbps_weighted_analysis <- function(
   initial_n <- nrow(df_clean)
   if (verbose) cat(paste("Initial sample size after cleaning:", initial_n, "\n"))
 
+  # ---- NEW: Determine treatment type (drives which balance metric is used) ----
+  treat_vals <- df_clean[[treatment_var]]
+  n_treat_levels <- length(unique(treat_vals))
+
+  if (n_treat_levels == 2) {
+    treatment_type <- "binary"
+  } else if (is.numeric(treat_vals)) {
+    treatment_type <- "continuous"
+  } else {
+    stop("Treatment '", treatment_var, "' has more than two categories. ",
+         "Balance summaries currently support binary or continuous treatments only.")
+  }
+
+  balance_metric <- if (treatment_type == "continuous") "r" else "SMD"
+  threshold_primary <- if (treatment_type == "continuous") balance_threshold_r else balance_threshold_m
+  vr_low <- 1 / balance_threshold_v
+  vr_high <- balance_threshold_v
+
+  if (verbose) {
+    cat("Treatment type detected:", treatment_type, "\n")
+    cat("Primary balance metric: |", balance_metric, "| < ", threshold_primary, "\n", sep = "")
+    if (treatment_type == "binary") {
+      cat("Secondary balance metric: VR between", vr_low, "and", vr_high, "\n")
+    }
+  }
+
   # 2. MISSING DATA ANALYSIS
   if (verbose) cat("Step 2: Analyzing missing data patterns and mechanisms...\n")
 
@@ -264,8 +287,8 @@ npcbps_weighted_analysis <- function(
           cat(paste("    Little's MCAR test p-value:", round(mcar_result$p.value, 4), "\n"))
 
           if (mcar_result$p.value > 0.05) {
-            cat("     Data appears to be Missing Completely At Random (MCAR)\n")
-            cat("     Multiple imputation assumptions are well supported\n")
+            cat("     No evidence against MCAR (Little's test not significant)\n")
+            cat("     Multiple imputation assumptions are reasonable\n")
           } else if (mcar_result$p.value > 0.01) {
             cat("    Marginal evidence against MCAR (p < 0.05 but > 0.01)\n")
             cat("    Multiple imputation may still be appropriate, but consider MAR assumption\n")
@@ -382,6 +405,40 @@ npcbps_weighted_analysis <- function(
     if (verbose) cat("  No missing data - using original dataset\n")
   }
 
+  # ---- NEW: helper to pull the correct balance statistics from a cobalt table ----
+  # Binary treatment:     Diff.* (SMD for continuous covariates, raw difference in
+  #                       proportions for binary covariates) + V.Ratio.*
+  # Continuous treatment: Corr.* (weighted treatment-covariate correlation)
+  extract_balance <- function(bal, imp) {
+    b <- as.data.frame(bal$Balance)
+
+    needed <- if (treatment_type == "continuous") c("Corr.Un", "Corr.Adj") else c("Diff.Un", "Diff.Adj")
+    missing_cols <- setdiff(needed, names(b))
+    if (length(missing_cols) > 0) {
+      stop("Expected balance columns not found in bal.tab output: ",
+           paste(missing_cols, collapse = ", "),
+           ". Available columns: ", paste(names(b), collapse = ", "))
+    }
+
+    tibble::tibble(
+      imputation     = imp,
+      covariate      = rownames(b),
+      covariate_type = as.character(b$Type),
+      metric         = balance_metric,
+      before         = b[[needed[1]]],
+      after          = b[[needed[2]]],
+      vr_before      = if ("V.Ratio.Un"  %in% names(b)) b[["V.Ratio.Un"]]  else NA_real_,
+      vr_after       = if ("V.Ratio.Adj" %in% names(b)) b[["V.Ratio.Adj"]] else NA_real_
+    )
+  }
+
+  # Stats to request from cobalt, by treatment type
+  bal_stats <- if (treatment_type == "continuous") {
+    "correlations"
+  } else {
+    c("mean.diffs", "variance.ratios")
+  }
+
   # 4. ANALYZE EACH IMPUTATION SEPARATELY
   if (verbose) cat("Step 4: Analyzing each imputed dataset separately...\n")
 
@@ -397,6 +454,7 @@ npcbps_weighted_analysis <- function(
   if (verbose) {
     cat("DEBUG: Outcome formula:", deparse(outcome_formula), "\n")
     cat("DEBUG: GLM family:", family$family, "with", family$link, "link\n")
+    cat("DEBUG: Standard errors:", if (robust_se) paste0("robust (", se_type, ")") else "model-based", "\n")
   }
 
   imputation_results <- list()
@@ -429,72 +487,17 @@ npcbps_weighted_analysis <- function(
         estimand = cbps_estimand
       )
 
-      # Balance assessment
-      balance_table <- bal.tab(npcbps_weights,
-                               treat = treatment_var,
-                               method = "weighting",
-                               m.threshold = balance_threshold_m,
-                               v.threshold = balance_threshold_v)
+      # ---- CHANGED: request the right statistics for the treatment type,
+      #      include unweighted values, and extract into a tidy table ----
+      balance_table <- cobalt::bal.tab(npcbps_weights,
+                                       stats = bal_stats,
+                                       un = TRUE)
 
-      # Check balance and provide warnings
-      if ("Balance" %in% names(balance_table)) {
-        balance_df <- as.data.frame(balance_table$Balance)
+      balance_long <- extract_balance(balance_table, imp)
 
-        # Check for standardized mean differences
-        diff_col <- NULL
-        if ("Diff.Adj" %in% names(balance_df)) {
-          diff_col <- "Diff.Adj"
-        } else if ("Diff.Target.Adj" %in% names(balance_df)) {
-          diff_col <- "Diff.Target.Adj"
-        }
-
-        if (!is.null(diff_col)) {
-          max_std_diff <- max(abs(balance_df[[diff_col]]), na.rm = TRUE)
-          mean_std_diff <- mean(abs(balance_df[[diff_col]]), na.rm = TRUE)
-          unbalanced_vars <- rownames(balance_df)[abs(balance_df[[diff_col]]) > balance_threshold_m]
-
-          if (verbose) {
-            cat("    Balance Assessment:\n")
-            cat(paste("      Maximum absolute standardized difference:", round(max_std_diff, 3), "\n"))
-            cat(paste("      Mean absolute standardized difference:", round(mean_std_diff, 3), "\n"))
-            cat(paste("      Variables above threshold:", length(unbalanced_vars), "out of", nrow(balance_df), "\n"))
-          }
-
-          # Warning for poor balance
-          if (max_std_diff > balance_threshold_m) {
-            warning(paste("WARNING: Poor covariate balance detected in imputation", imp, "!",
-                          "\n  Maximum standardized difference:", round(max_std_diff, 3),
-                          "(threshold:", balance_threshold_m, ")",
-                          "\n  Variables with poor balance:", paste(unbalanced_vars, collapse = ", "),
-                          "\n  Consider adding more covariates or checking sample size."),
-                    call. = FALSE)
-          }
-
-          # Additional warning for very poor balance
-          if (max_std_diff > 0.25) {
-            warning(paste("SEVERE WARNING: Very poor covariate balance detected in imputation", imp, "!",
-                          "\n  Maximum standardized difference:", round(max_std_diff, 3),
-                          "\n  Results may be unreliable. Consider:",
-                          "\n  - Adding more covariates to propensity model",
-                          "\n  - Checking if sample size is sufficient for nonparametric methods",
-                          "\n  - Using parametric CBPS instead",
-                          "\n  - Checking for overlap in covariate distributions"),
-                    call. = FALSE)
-          }
-        }
-
-        # Check variance ratios if available
-        if ("V.Ratio.Adj" %in% names(balance_df)) {
-          extreme_var_ratios <- rownames(balance_df)[balance_df$V.Ratio.Adj > balance_threshold_v |
-                                                       balance_df$V.Ratio.Adj < (1/balance_threshold_v)]
-
-          if (length(extreme_var_ratios) > 0) {
-            warning(paste("WARNING: Extreme variance ratios detected in imputation", imp, "for variables:",
-                          paste(extreme_var_ratios, collapse = ", "),
-                          "\n  This suggests poor balance in variable distributions."),
-                    call. = FALSE)
-          }
-        }
+      if (verbose) {
+        cat(paste0("    Balance: max |", balance_metric, "| after weighting = ",
+                   round(max(abs(balance_long$after), na.rm = TRUE), 4), "\n"))
       }
 
       # Fit weighted GLM
@@ -503,14 +506,22 @@ npcbps_weighted_analysis <- function(
                             weights = npcbps_weights$weights,
                             family = family)
 
+      # ---- CHANGED: robust (sandwich) variance for pooling ----
+      model_vcov <- if (robust_se) {
+        sandwich::vcovHC(weighted_model, type = se_type)
+      } else {
+        vcov(weighted_model)
+      }
+
       # Store results
       imputation_results[[imp]] <- list(
         data = df_imp,
         weights = npcbps_weights,
         balance = balance_table,
+        balance_long = balance_long,
         model = weighted_model,
         coefficients = coef(weighted_model),
-        vcov = vcov(weighted_model),
+        vcov = model_vcov,
         n = nrow(df_imp)
       )
 
@@ -518,7 +529,6 @@ npcbps_weighted_analysis <- function(
 
     }, error = function(e) {
       warning(paste("Error in imputation", imp, ":", e$message), call. = FALSE)
-      imputation_results[[imp]] <- NULL
     })
   }
 
@@ -534,6 +544,66 @@ npcbps_weighted_analysis <- function(
     warning(paste("Only", n_successful, "of", mice_m, "imputations succeeded"), call. = FALSE)
   }
 
+  # ---- NEW 5. BALANCE ACROSS ALL IMPUTATIONS ----
+  if (verbose) cat("Step 5: Summarizing balance across all imputations...\n")
+
+  balance_by_imputation <- dplyr::bind_rows(lapply(imputation_results, `[[`, "balance_long"))
+
+  safe_min  <- function(x) if (all(is.na(x))) NA_real_ else min(x, na.rm = TRUE)
+  safe_max  <- function(x) if (all(is.na(x))) NA_real_ else max(x, na.rm = TRUE)
+  safe_mean <- function(x) if (all(is.na(x))) NA_real_ else mean(x, na.rm = TRUE)
+
+  balance_summary <- balance_by_imputation %>%
+    dplyr::group_by(covariate, covariate_type, metric) %>%
+    dplyr::summarise(
+      mean_abs_before = safe_mean(abs(before)),
+      mean_abs_after  = safe_mean(abs(after)),
+      max_abs_after   = safe_max(abs(after)),
+      mean_vr_after   = safe_mean(vr_after),
+      min_vr_after    = safe_min(vr_after),
+      max_vr_after    = safe_max(vr_after),
+      n_imputations   = dplyr::n(),
+      .groups = "drop"
+    ) %>%
+    dplyr::mutate(
+      # Primary criterion must hold in EVERY imputation (uses the max)
+      primary_balanced = max_abs_after < threshold_primary,
+      # Secondary VR check (binary treatments, continuous covariates only)
+      vr_balanced = dplyr::if_else(
+        is.na(min_vr_after), NA,
+        min_vr_after >= vr_low & max_vr_after <= vr_high
+      ),
+      balance_status = dplyr::case_when(
+        !primary_balanced   ~ paste0("Imbalanced: |", metric, "| >= ", threshold_primary),
+        vr_balanced %in% FALSE ~ "Primary met; VR outside range",
+        TRUE                ~ paste0("Balanced: |", metric, "| < ", threshold_primary)
+      )
+    )
+
+  primary_fail <- balance_summary$covariate[!balance_summary$primary_balanced]
+  vr_fail      <- balance_summary$covariate[balance_summary$vr_balanced %in% FALSE]
+
+  if (length(primary_fail) > 0) {
+    warning(paste0("Poor balance (|", balance_metric, "| >= ", threshold_primary,
+                   " in at least one imputation) for: ",
+                   paste(primary_fail, collapse = ", ")),
+            call. = FALSE)
+  }
+  if (length(vr_fail) > 0) {
+    warning(paste0("Variance ratio outside [", vr_low, ", ", vr_high,
+                   "] in at least one imputation for: ",
+                   paste(vr_fail, collapse = ", ")),
+            call. = FALSE)
+  }
+
+  if (verbose) {
+    cat("  Balance summary across", n_successful, "imputations:\n")
+    print(balance_summary %>%
+            dplyr::select(covariate, metric, mean_abs_after, max_abs_after,
+                          min_vr_after, max_vr_after, balance_status),
+          digits = 4)
+  }
+
   # Get coefficient names
   all_coef_names <- names(imputation_results[[1]]$coefficients)
   model_coef_names_no_intercept <- all_coef_names[all_coef_names != "(Intercept)"]
@@ -543,23 +613,23 @@ npcbps_weighted_analysis <- function(
     cat("DEBUG: Coefficients for bootstrap:", paste(model_coef_names_no_intercept, collapse = ", "), "\n")
   }
 
-  # 5. POOL RESULTS USING RUBIN'S RULES
-  if (verbose) cat("Step 5: Pooling results using Rubin's rules...\n")
+  # 6. POOL RESULTS USING RUBIN'S RULES
+  if (verbose) cat("Step 6: Pooling results using Rubin's rules...\n")
 
-  # Extract coefficients and variances from each imputation
+  # Extract coefficients and (robust) variances from each imputation
   Q_m <- sapply(imputation_results, function(x) x$coefficients)
   U_m <- sapply(imputation_results, function(x) diag(x$vcov))
 
   # Rubin's rules
   Q_bar <- rowMeans(Q_m)
   U_bar <- rowMeans(U_m)
-  B <- apply(Q_m, 1, stats::var)  # FIXED: Explicitly use stats::var
+  B <- apply(Q_m, 1, stats::var)
 
   m <- n_successful
   T <- U_bar + B + B/m
   SE <- sqrt(T)
 
-  # Degrees of freedom
+  # Degrees of freedom (Barnard & Rubin, 1999)
   lambda <- (B + B/m) / T
   df_old <- (m - 1) / lambda^2
   df_obs <- imputation_results[[1]]$model$df.residual
@@ -591,7 +661,8 @@ npcbps_weighted_analysis <- function(
     fmi = FMI,
     within_var = U_bar,
     between_var = B,
-    total_var = T
+    total_var = T,
+    se_method = if (robust_se) paste0("robust_", se_type) else "model_based"
   )
 
   if (verbose) {
@@ -604,12 +675,12 @@ npcbps_weighted_analysis <- function(
           digits = 4)
   }
 
-  # 6. BOOTSTRAP ONE GLM MODEL
+  # 7. BOOTSTRAP ONE GLM MODEL
   bootstrap_summary <- NULL
   bootstrap_results <- NULL
 
   if (bootstrap_n > 0) {
-    if (verbose) cat("\nStep 6: Bootstrapping GLM from imputation", bootstrap_imputation, "...\n")
+    if (verbose) cat("\nStep 7: Bootstrapping GLM from imputation", bootstrap_imputation, "...\n")
 
     # Use specified imputation for bootstrap
     boot_data <- imputation_results[[bootstrap_imputation]]$data %>%
@@ -659,6 +730,7 @@ npcbps_weighted_analysis <- function(
 
     # Convert to matrix and handle failures
     boot_matrix <- do.call(cbind, boot_results)
+    if (is.null(dim(boot_matrix))) boot_matrix <- matrix(boot_matrix, nrow = 1)
     rownames(boot_matrix) <- model_coef_names_no_intercept
 
     # Check if we have any successful bootstrap samples
@@ -693,7 +765,7 @@ npcbps_weighted_analysis <- function(
       bootstrap_summary <- tibble(
         term = model_coef_names_no_intercept,
         estimate = coef(imputation_results[[bootstrap_imputation]]$model)[model_coef_names_no_intercept],
-        se = summary(imputation_results[[bootstrap_imputation]]$model)$coefficients[model_coef_names_no_intercept, "Std. Error"],
+        se = sqrt(diag(imputation_results[[bootstrap_imputation]]$vcov))[model_coef_names_no_intercept],
         ci_lower = NA_real_,
         ci_upper = NA_real_
       )
@@ -701,72 +773,30 @@ npcbps_weighted_analysis <- function(
     }
   }
 
-  # 7. BALANCE SUMMARY
-  if (verbose) cat("\nStep 7: Summarizing balance across imputations...\n")
-
-  balance_summary <- map_dfr(1:length(imputation_results), function(i) {
-    bal <- imputation_results[[i]]$balance
-    if ("Balance" %in% names(bal)) {
-      balance_df <- as.data.frame(bal$Balance)
-
-      diff_col <- NULL
-      if ("Diff.Adj" %in% names(balance_df)) {
-        diff_col <- "Diff.Adj"
-      } else if ("Diff.Target.Adj" %in% names(balance_df)) {
-        diff_col <- "Diff.Target.Adj"
-      }
-
-      if (!is.null(diff_col)) {
-        tibble(
-          imputation = i,
-          max_abs_std_diff = max(abs(balance_df[[diff_col]]), na.rm = TRUE),
-          mean_abs_std_diff = mean(abs(balance_df[[diff_col]]), na.rm = TRUE),
-          n_above_threshold = sum(abs(balance_df[[diff_col]]) > balance_threshold_m, na.rm = TRUE)
-        )
-      } else {
-        NULL
-      }
-    } else {
-      NULL
-    }
-  })
-
-  if (!is.null(balance_summary) && nrow(balance_summary) > 0) {
-    if (verbose) {
-      cat("Balance summary across imputations:\n")
-      cat(paste("  Average max abs std diff:", round(mean(balance_summary$max_abs_std_diff), 3), "\n"))
-      cat(paste("  Average mean abs std diff:", round(mean(balance_summary$mean_abs_std_diff), 3), "\n"))
-    }
-
-    # Check if any imputation has poor balance
-    poor_balance <- any(balance_summary$max_abs_std_diff > balance_threshold_m)
-    if (poor_balance) {
-      warning("Poor balance detected in one or more imputations", call. = FALSE)
-    }
-  }
-
   final_n <- median(sapply(imputation_results, function(x) x$n))
 
   if (verbose) cat(paste("\nAnalysis completed. Median sample size across imputations:", final_n, "\n"))
 
-  # 8. RETURN RESULTS (maintaining naming compatibility)
+  # 8. RETURN RESULTS
   return(list(
     # Original outputs (from first imputation for compatibility)
     data = imputation_results[[1]]$data,
     model = imputation_results[[1]]$model,
     weights = imputation_results[[1]]$weights,
     balance = imputation_results[[1]]$balance,
-    bootstrap_summary = bootstrap_summary,  # Bootstrap from ONE imputation
-    bootstrap_results = bootstrap_results,  # Bootstrap from ONE imputation
+    bootstrap_summary = bootstrap_summary,
+    bootstrap_results = bootstrap_results,
     sample_sizes = list(
       initial = initial_n,
       final = final_n
     ),
 
-    # New MI-specific outputs
-    pooled_results = pooled_results,        # PRIMARY RESULTS - use these!
+    # MI-specific outputs
+    pooled_results = pooled_results,              # PRIMARY RESULTS - use these!
     imputation_results = imputation_results,
-    balance_summary = balance_summary,
+    balance_by_imputation = balance_by_imputation, # every covariate x imputation
+    balance_summary = balance_summary,             # per covariate, across imputations - USE FOR TABLES
+    treatment_type = treatment_type,
     n_imputations = m,
     n_bootstraps = bootstrap_n,
     bootstrap_imputation_used = bootstrap_imputation
