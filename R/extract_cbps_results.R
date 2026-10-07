@@ -3,6 +3,21 @@
 #' Extracts key results from \code{npcbps_weighted_analysis()} into a structured
 #' format suitable for tables, visualization, and further analysis.
 #'
+#' REVISION NOTES (changes for the updated npcbps_weighted_analysis):
+#' \itemize{
+#'   \item NEW: returns the pooled average marginal effect (\code{pooled_ame}) and the
+#'     per-imputation AMEs (\code{ame_by_imputation}). AME columns are also joined onto
+#'     the treatment row of \code{estimates}, so \code{quick_results_summary()} shows them.
+#'   \item CHANGED: single-imputation SEs now reuse the vcov the analysis function already
+#'     computed (\code{imputation_results[[1]]$vcov}). This works for glm families and for
+#'     ordinal (polr) models, where \code{sandwich::vcovHC()} is not available. Falls back
+#'     to recomputing for older results objects that lack a stored vcov.
+#'   \item NEW: returns \code{family_label} and \code{coef_scale} ("response" for gaussian,
+#'     "link" otherwise) so tables can say whether coefficients are log-odds.
+#'   \item Works with results from the previous version of npcbps_weighted_analysis
+#'     (no AME): AME outputs are then NULL / NA.
+#' }
+#'
 #' Balance is summarized across ALL imputations using the statistic appropriate
 #' to the treatment type:
 #' \itemize{
@@ -10,8 +25,8 @@
 #'     plus variance ratio (secondary)
 #'   \item Continuous treatment: |r|, the weighted treatment-covariate correlation
 #' }
-#' Single-imputation GLM estimates are reported with robust (sandwich) standard
-#' errors. Pooled (Rubin's rules) estimates remain the primary results.
+#' Pooled (Rubin's rules) estimates remain the primary results; for non-gaussian
+#' outcomes, report \code{pooled_ame} as the effect on the outcome scale.
 #'
 #' @param cbps_results List. Output from \code{npcbps_weighted_analysis()}
 #' @param include_balance_details Logical. Return full list (TRUE) or a simple
@@ -19,20 +34,24 @@
 #' @param smd_threshold Numeric. |SMD| threshold for binary treatments (default 0.1)
 #' @param corr_threshold Numeric. |r| threshold for continuous treatments (default 0.1)
 #' @param vr_range Numeric length 2. Acceptable variance ratio range (default c(0.5, 2))
-#' @param robust_type Character. Sandwich estimator type (default "HC0")
+#' @param robust_type Character. Sandwich estimator type, used only when the results
+#'   object has no stored vcov (default "HC0")
 #'
 #' @return If \code{include_balance_details = TRUE}, a list containing:
 #' \itemize{
-#'   \item \code{estimates}: Imputation-1 GLM estimates (robust SEs) + bootstrap
+#'   \item \code{estimates}: Imputation-1 model estimates (robust SEs) + bootstrap,
+#'     with pooled AME columns on the treatment row
 #'   \item \code{balance}: Per-covariate balance summarized across imputations
-#'     (mean and max of the balance statistic, VR range, balance status).
-#'     Use this for the supplementary balance tables.
-#'   \item \code{balance_by_imputation}: Long table, one row per covariate per imputation
+#'   \item \code{balance_by_imputation}: One row per covariate per imputation
 #'   \item \code{sample_sizes}: Sample size information
 #'   \item \code{summary_stats}: Overall balance metrics across imputations
-#'   \item \code{pooled_estimates}: Rubin's rules pooled estimates (PRIMARY RESULTS)
+#'   \item \code{pooled_estimates}: Rubin's rules pooled coefficients
+#'   \item \code{pooled_ame}: Rubin's rules pooled AME (PRIMARY EFFECT, outcome scale)
+#'   \item \code{ame_by_imputation}: AME estimate and variance from each imputation
 #'   \item \code{treatment_type}: "binary" or "continuous"
 #'   \item \code{balance_statistic}: "|SMD|" or "|r|"
+#'   \item \code{family_label}: description of the outcome model
+#'   \item \code{coef_scale}: "response" or "link"
 #' }
 #'
 #' @export
@@ -55,19 +74,36 @@ extract_cbps_results <- function(cbps_results,
 
   final_n <- cbps_results$sample_sizes$final
 
+  # ---- NEW: model description ----
+  family_label <- if (!is.null(cbps_results$family_label)) {
+    cbps_results$family_label
+  } else if (!is.null(cbps_results$model$family)) {
+    paste(cbps_results$model$family$family, "with", cbps_results$model$family$link, "link")
+  } else {
+    NA_character_
+  }
+  is_gaussian_identity <- !is.na(family_label) && grepl("^gaussian with identity", family_label)
+  coef_scale <- if (is_gaussian_identity) "response" else "link"
+
   # Helpers ---------------------------------------------------------------
   safe_min <- function(x) if (all(is.na(x))) NA_real_ else min(x, na.rm = TRUE)
   safe_max <- function(x) if (all(is.na(x))) NA_real_ else max(x, na.rm = TRUE)
   safe_mean <- function(x) if (all(is.na(x))) NA_real_ else mean(x, na.rm = TRUE)
 
-  # Robust (sandwich) coefficient table for a single weighted GLM
-  tidy_robust <- function(model, level = 0.95) {
+  # ---- CHANGED: coefficient table using the stored vcov when available ----
+  tidy_robust <- function(model, V = NULL, se_label = NULL, level = 0.95) {
     est <- stats::coef(model)
-    # glm_weightit already returns robust / M-estimation vcov
-    V <- if (inherits(model, "glm_weightit")) {
-      stats::vcov(model)
-    } else {
-      sandwich::vcovHC(model, type = robust_type)
+    if (is.null(V)) {
+      V <- if (inherits(model, "glm_weightit")) {
+        stats::vcov(model)
+      } else if (inherits(model, "polr")) {
+        tryCatch(sandwich::sandwich(model), error = function(e) stats::vcov(model))
+      } else {
+        sandwich::vcovHC(model, type = robust_type)
+      }
+      if (is.null(se_label)) {
+        se_label <- if (inherits(model, "glm_weightit")) "glm_weightit" else paste0("robust_", robust_type)
+      }
     }
     se <- sqrt(diag(V))[names(est)]
     stat <- est / se
@@ -88,7 +124,7 @@ extract_cbps_results <- function(cbps_results,
       glm_p_value   = unname(p),
       glm_conf_low  = unname(est - crit * se),
       glm_conf_high = unname(est + crit * se),
-      se_type       = if (inherits(model, "glm_weightit")) "glm_weightit" else paste0("robust_", robust_type)
+      se_type       = if (is.null(se_label)) NA_character_ else se_label
     )
   }
 
@@ -102,18 +138,30 @@ extract_cbps_results <- function(cbps_results,
   }
 
   # 1. MODEL ESTIMATES (imputation 1, robust SEs) --------------------------
-  model_summary <- tidy_robust(cbps_results$model) %>%
-    dplyr::mutate(sample_size = final_n)
+  stored_vcov <- if (length(cbps_results$imputation_results) > 0) {
+    cbps_results$imputation_results[[1]]$vcov
+  } else {
+    NULL
+  }
+  stored_se_label <- if (!is.null(cbps_results$pooled_results$se_method)) {
+    cbps_results$pooled_results$se_method[1]
+  } else {
+    NULL
+  }
+
+  model_summary <- tidy_robust(cbps_results$model, V = stored_vcov, se_label = stored_se_label) %>%
+    dplyr::mutate(sample_size = final_n, coef_scale = coef_scale)
 
   # 2. BOOTSTRAP RESULTS ---------------------------------------------------
   if (!is.null(cbps_results$bootstrap_summary)) {
     bootstrap_results <- cbps_results$bootstrap_summary %>%
       dplyr::rename(dplyr::any_of(c(
-        variable            = "term",
-        bootstrap_estimate  = "estimate",
-        bootstrap_se        = "se",
-        bootstrap_conf_low  = "ci_lower",
-        bootstrap_conf_high = "ci_upper"
+        variable              = "term",
+        bootstrap_estimate    = "estimate",
+        bootstrap_se          = "se",
+        bootstrap_conf_low    = "ci_lower",
+        bootstrap_conf_high   = "ci_upper",
+        bootstrap_n_successful = "n_successful"
       )))
     combined_estimates <- model_summary %>%
       dplyr::left_join(bootstrap_results, by = "variable")
@@ -121,9 +169,36 @@ extract_cbps_results <- function(cbps_results,
     combined_estimates <- model_summary
   }
 
+  # ---- NEW: pooled AME, joined onto the treatment row ----
+  pooled_ame <- NULL
+  if (!is.null(cbps_results$pooled_ame)) {
+    pooled_ame <- cbps_results$pooled_ame %>%
+      dplyr::rename(dplyr::any_of(c(
+        ame_term      = "term",
+        ame_estimate  = "estimate",
+        ame_se        = "se",
+        ame_statistic = "statistic",
+        ame_p_value   = "p.value",
+        ame_conf_low  = "ci_lower",
+        ame_conf_high = "ci_upper",
+        ame_df        = "df",
+        ame_fmi       = "fmi"
+      ))) %>%
+      dplyr::mutate(variable = sub("^AME_", "", ame_term))
+
+    combined_estimates <- combined_estimates %>%
+      dplyr::left_join(
+        pooled_ame %>%
+          dplyr::select(dplyr::any_of(c("variable", "ame_estimate", "ame_se", "ame_p_value",
+                                        "ame_conf_low", "ame_conf_high", "ame_fmi", "ame_type"))),
+        by = "variable"
+      )
+  }
+
   if (!include_balance_details) {
     return(combined_estimates %>%
              dplyr::mutate(
+               family_label        = family_label,
                initial_sample_size = cbps_results$sample_sizes$initial,
                final_sample_size   = final_n,
                n_dropped           = cbps_results$sample_sizes$initial - final_n
@@ -144,12 +219,12 @@ extract_cbps_results <- function(cbps_results,
 
   if (nrow(balance_long) > 0) {
     balance_long <- balance_long %>%
-      dplyr::select(-dplyr::matches("Threshold")) %>%   # drop cobalt's own flags
+      dplyr::select(-dplyr::matches("Threshold")) %>%
       dplyr::rename(dplyr::any_of(c(
         type            = "Type",
         diff_unadj      = "Diff.Un",
         diff_adj        = "Diff.Adj",
-        diff_target_adj = "Diff.Target.Adj",  # target-mean difference, NOT a balance SMD
+        diff_target_adj = "Diff.Target.Adj",
         corr_unadj      = "Corr.Un",
         corr_adj        = "Corr.Adj",
         var_ratio_unadj = "V.Ratio.Un",
@@ -190,10 +265,10 @@ extract_cbps_results <- function(cbps_results,
       dplyr::mutate(
         stat_label = dplyr::case_when(
           treatment_type == "continuous" ~ "|r|",
-          type == "Binary"               ~ "|raw diff|",  # cobalt default for binary covariates
+          type == "Binary"               ~ "|raw diff|",
           TRUE                           ~ "|SMD|"
         ),
-        stat_balanced = max_balance_stat < threshold,  # worst case across imputations
+        stat_balanced = max_balance_stat < threshold,
         vr_balanced = if (treatment_type == "binary") {
           is.na(min_var_ratio) | (min_var_ratio >= vr_range[1] & max_var_ratio <= vr_range[2])
         } else {
@@ -237,7 +312,7 @@ extract_cbps_results <- function(cbps_results,
     summary_stats <- NULL
   }
 
-  # 4. POOLED RESULTS (PRIMARY) ---------------------------------------------
+  # 4. POOLED RESULTS ---------------------------------------------------------
   pooled_estimates <- if (!is.null(cbps_results$pooled_results)) {
     cbps_results$pooled_results %>%
       dplyr::rename(dplyr::any_of(c(
@@ -250,7 +325,8 @@ extract_cbps_results <- function(cbps_results,
         pooled_conf_high = "ci_upper",
         pooled_df        = "df",
         pooled_fmi       = "fmi"
-      )))
+      ))) %>%
+      dplyr::mutate(coef_scale = coef_scale)
   } else {
     NULL
   }
@@ -270,8 +346,12 @@ extract_cbps_results <- function(cbps_results,
     ),
     summary_stats     = summary_stats,
     pooled_estimates  = pooled_estimates,
+    pooled_ame        = pooled_ame,
+    ame_by_imputation = cbps_results$ame_by_imputation,
     treatment_type    = treatment_type,
-    balance_statistic = balance_statistic
+    balance_statistic = balance_statistic,
+    family_label      = family_label,
+    coef_scale        = coef_scale
   )
 }
 
@@ -284,9 +364,11 @@ quick_results_summary <- function(cbps_results) {
   result <- extract_cbps_results(cbps_results, include_balance_details = FALSE)
 
   desired_cols <- c(
-    "variable",
+    "variable", "family_label", "coef_scale",
     "glm_estimate", "glm_se", "glm_p_value", "glm_conf_low", "glm_conf_high", "se_type",
     "bootstrap_estimate", "bootstrap_se", "bootstrap_conf_low", "bootstrap_conf_high",
+    "bootstrap_n_successful",
+    "ame_estimate", "ame_se", "ame_p_value", "ame_conf_low", "ame_conf_high", "ame_type",
     "final_sample_size"
   )
 
