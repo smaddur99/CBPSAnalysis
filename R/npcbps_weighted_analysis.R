@@ -15,6 +15,9 @@
 #'     default AME is on the expected category score (scores 0, 1, 2, ...);
 #'     \code{ame_hypothesis} lets you supply other weights, e.g. c(0, 0, 0, 1, 1)
 #'     for the AME on P(top two categories).
+#'   \item FIXED: for ordinal outcomes, both the AME and the coefficient standard errors come
+#'     from a within-imputation bootstrap (\code{ame_boot_n}, weights held fixed). The polr
+#'     sandwich vcov understated the slope SE and gave unreliable AME SEs.
 #'   \item NEW: \code{ame_scale} multiplies the AME and its SE, e.g. 2 to report a
 #'     fractional-logit AME for an outcome rescaled as (y - 1) / 2 in original units.
 #'   \item FIXED: ordinal models pool only the slope coefficients (thresholds are
@@ -62,6 +65,8 @@
 #'   per-category AMEs, one per outcome level in order. NULL (default) uses scores 0, 1, 2, ...
 #'   (AME on the expected category score).
 #' @param ame_scale Numeric. Multiplier applied to the AME and its SE (default: 1).
+#' @param ame_boot_n Integer. Ordinal outcomes only: bootstrap resamples per imputation
+#'   for the AME and coefficient standard errors (default: 500). Weights are treated as fixed.
 #' @param verbose Logical. Whether to print progress messages (default: TRUE)
 #'
 #' @return A list containing:
@@ -183,6 +188,7 @@ npcbps_weighted_analysis <- function(
     family = gaussian(),
     ame_hypothesis = NULL,
     ame_scale = 1,
+    ame_boot_n = 500,
     verbose = TRUE
 ) {
 
@@ -543,7 +549,7 @@ npcbps_weighted_analysis <- function(
     cat("DEBUG: Outcome formula:", deparse(outcome_formula), "\n")
     cat("DEBUG: Outcome family:", fam_label, "\n")
     cat("DEBUG: Standard errors:",
-        if (!robust_se) "model-based" else if (is_ordinal) "robust (sandwich, HC0)" else paste0("robust (", se_type, ")"),
+        if (is_ordinal) paste0("bootstrap (B = ", ame_boot_n, ", weights fixed)") else if (!robust_se) "model-based" else paste0("robust (", se_type, ")"),
         "\n")
   }
 
@@ -583,8 +589,79 @@ npcbps_weighted_analysis <- function(
     V[keep, keep, drop = FALSE]
   }
 
-  # ---- NEW: weighted average marginal effect of the treatment ----
-  compute_ame <- function(m, d, w) {
+  # ---- FIXED: ordinal AME computed directly from predicted probabilities ----
+  # Scores are keyed by outcome level, so levels dropped in a bootstrap resample are handled.
+  ordinal_ame_point <- function(fit, d, w) {
+    lv_all <- levels(df_clean[[outcome_var]])
+    h <- if (is.null(ame_hypothesis)) seq_along(lv_all) - 1 else ame_hypothesis
+    names(h) <- lv_all
+    score_fun <- function(nd) {
+      p <- predict(fit, nd, type = "probs")
+      if (is.null(dim(p))) p <- matrix(p, nrow = 1, dimnames = list(NULL, names(p)))
+      as.vector(p %*% h[colnames(p)])
+    }
+    tv <- d[[treatment_var]]
+    d1 <- d
+    d0 <- d
+    if (treatment_type == "binary") {
+      vals <- if (is.factor(tv)) levels(droplevels(tv)) else sort(unique(tv))
+      if (is.factor(tv)) {
+        d1[[treatment_var]] <- factor(rep(vals[2], nrow(d)), levels = levels(tv))
+        d0[[treatment_var]] <- factor(rep(vals[1], nrow(d)), levels = levels(tv))
+      } else {
+        d1[[treatment_var]] <- vals[2]
+        d0[[treatment_var]] <- vals[1]
+      }
+      diffs <- score_fun(d1) - score_fun(d0)
+    } else {
+      eps <- 1e-4 * stats::sd(tv)
+      d1[[treatment_var]] <- tv + eps
+      d0[[treatment_var]] <- tv - eps
+      diffs <- (score_fun(d1) - score_fun(d0)) / (2 * eps)
+    }
+    stats::weighted.mean(diffs, w)
+  }
+
+  # ---- weighted average marginal effect of the treatment ----
+  # Ordinal: point estimate from predicted probabilities, SE from a nonparametric
+  #   bootstrap within the imputation (weights treated as fixed). The delta method with
+  #   the polr sandwich vcov gave unreliable SEs for these AMEs.
+  # glm families: marginaleffects with the robust vcov (delta method).
+  compute_ame <- function(m, d, w, seed = NULL) {
+    if (is_ordinal) {
+      est <- ordinal_ame_point(m, d, w)
+      if (!is.null(seed)) set.seed(seed)
+      # Each resample returns c(AME, slope coefficients); the slope covariance
+      # replaces the polr sandwich vcov for pooling the coefficients.
+      cf_names <- names(coef(m))
+      na_out <- rep(NA_real_, 1 + length(cf_names))
+      boot <- replicate(ame_boot_n, {
+        idx <- sample(nrow(d), replace = TRUE)
+        db <- d[idx, , drop = FALSE]
+        wb <- w[idx]
+        if (length(unique(db[[treatment_var]])) < 2) return(na_out)
+        fb <- tryCatch(suppressWarnings(fit_outcome(db, wb)), error = function(e) NULL)
+        if (is.null(fb) || !isTRUE(fb$converged)) return(na_out)
+        a <- tryCatch(ordinal_ame_point(fb, db, wb), error = function(e) NA_real_)
+        c(a, unname(coef(fb)[cf_names]))
+      })
+      boot <- matrix(boot, nrow = 1 + length(cf_names))
+      ame_boot <- boot[1, ]
+      coef_boot <- t(boot[-1, , drop = FALSE])
+      colnames(coef_boot) <- cf_names
+      ok <- !is.na(ame_boot) & stats::complete.cases(coef_boot)
+      n_ok <- sum(ok)
+      if (n_ok < 10) stop("Too few successful bootstrap samples (", n_ok, ").")
+      if (n_ok < 0.9 * ame_boot_n) {
+        warning("Ordinal bootstrap: only ", n_ok, " of ", ame_boot_n,
+                " resamples succeeded.", call. = FALSE)
+      }
+      return(list(estimate = est * ame_scale,
+                  variance = stats::var(ame_boot[ok]) * ame_scale^2,
+                  n_boot_ok = n_ok,
+                  vcov_coef = stats::cov(coef_boot[ok, , drop = FALSE])))
+    }
+
     d$.w <- w
     args <- list(m, newdata = d, wts = w, vcov = get_vcov(m, full = TRUE))
 
@@ -609,20 +686,10 @@ npcbps_weighted_analysis <- function(
       }
     )
 
-    if (is_ordinal) {
-      lv <- levels(droplevels(d[[outcome_var]]))
-      ord <- match(lv, as.character(ame$group))
-      if (anyNA(ord)) stop("Could not match AME rows to outcome levels.")
-      est <- ame$estimate[ord]
-      V_ame <- as.matrix(stats::vcov(ame))[ord, ord, drop = FALSE]
-      h <- if (is.null(ame_hypothesis)) seq_along(lv) - 1 else ame_hypothesis
-      list(estimate = sum(h * est) * ame_scale,
-           variance = drop(t(h) %*% V_ame %*% h) * ame_scale^2)
-    } else {
-      if (nrow(ame) != 1) stop("Expected one AME row, got ", nrow(ame), ".")
-      list(estimate = ame$estimate * ame_scale,
-           variance = ame$std.error^2 * ame_scale^2)
-    }
+    if (nrow(ame) != 1) stop("Expected one AME row, got ", nrow(ame), ".")
+    list(estimate = ame$estimate * ame_scale,
+         variance = ame$std.error^2 * ame_scale^2,
+         n_boot_ok = NA_integer_)
   }
 
   imputation_results <- list()
@@ -669,12 +736,22 @@ npcbps_weighted_analysis <- function(
 
       # ---- NEW: AME (failure here does not drop the imputation) ----
       ame_i <- tryCatch(
-        compute_ame(weighted_model, df_imp, npcbps_weights$weights),
+        compute_ame(weighted_model, df_imp, npcbps_weights$weights, seed = bootstrap_seed + imp),
         error = function(e) {
           warning(paste("AME failed in imputation", imp, ":", e$message), call. = FALSE)
-          list(estimate = NA_real_, variance = NA_real_)
+          list(estimate = NA_real_, variance = NA_real_, n_boot_ok = NA_integer_)
         }
       )
+
+      # ---- FIXED: ordinal coefficient SEs come from the same bootstrap ----
+      if (is_ordinal) {
+        if (!is.null(ame_i$vcov_coef)) {
+          model_vcov <- ame_i$vcov_coef
+        } else {
+          warning("Imputation ", imp, ": ordinal bootstrap failed; coefficient SEs use the sandwich vcov.",
+                  call. = FALSE)
+        }
+      }
 
       imputation_results[[imp]] <- list(
         data = df_imp,
@@ -685,6 +762,7 @@ npcbps_weighted_analysis <- function(
         coefficients = coef(weighted_model),
         vcov = model_vcov,
         ame_estimate = ame_i$estimate,
+        ame_boot_ok = ame_i$n_boot_ok,
         ame_variance = ame_i$variance,
         n = nrow(df_imp)
       )
@@ -816,7 +894,7 @@ npcbps_weighted_analysis <- function(
 
   m <- n_successful
   df_obs <- imputation_results[[1]]$model$df.residual
-  se_label <- if (!robust_se) "model_based" else if (is_ordinal) "robust_sandwich_HC0" else paste0("robust_", se_type)
+  se_label <- if (is_ordinal) paste0("bootstrap_fixed_weights_B", ame_boot_n) else if (!robust_se) "model_based" else paste0("robust_", se_type)
 
   # Coefficients (cbind keeps a parameters x imputations matrix even with one coefficient)
   Q_m <- do.call(cbind, lapply(imputation_results, function(x) x$coefficients))
@@ -830,7 +908,8 @@ npcbps_weighted_analysis <- function(
   ame_by_imputation <- tibble(
     imputation = seq_len(m),
     estimate = sapply(imputation_results, `[[`, "ame_estimate"),
-    variance = sapply(imputation_results, `[[`, "ame_variance")
+    variance = sapply(imputation_results, `[[`, "ame_variance"),
+    n_boot_ok = sapply(imputation_results, function(x) if (is.null(x$ame_boot_ok)) NA_integer_ else as.integer(x$ame_boot_ok))
   )
   ame_ok <- !is.na(ame_by_imputation$estimate) & !is.na(ame_by_imputation$variance)
 
@@ -845,7 +924,7 @@ npcbps_weighted_analysis <- function(
     U_ame <- matrix(ame_by_imputation$variance[ame_ok], nrow = 1, dimnames = list(ame_label, NULL))
     pooled_ame <- pool_rubin(Q_ame, U_ame, df_obs) %>%
       dplyr::mutate(
-        se_method = se_label,
+        se_method = if (is_ordinal) paste0("bootstrap_fixed_weights_B", ame_boot_n) else se_label,
         ame_type = if (is_ordinal) {
           if (is.null(ame_hypothesis)) "expected category score" else
             paste0("weighted categories (", paste(ame_hypothesis, collapse = ", "), ")")

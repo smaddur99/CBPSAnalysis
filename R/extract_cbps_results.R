@@ -97,7 +97,9 @@ extract_cbps_results <- function(cbps_results,
       V <- if (inherits(model, "glm_weightit")) {
         stats::vcov(model)
       } else if (inherits(model, "polr")) {
-        tryCatch(sandwich::sandwich(model), error = function(e) stats::vcov(model))
+        warning("No stored vcov for polr model; using model-based SEs. Rerun with the updated analysis function.",
+                call. = FALSE)
+        stats::vcov(model)
       } else {
         sandwich::vcovHC(model, type = robust_type)
       }
