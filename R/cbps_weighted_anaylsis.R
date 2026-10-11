@@ -13,9 +13,11 @@
 #'     every imputation with \code{marginaleffects} and pooled with Rubin's rules
 #'     (\code{pooled_ame}). Ordinal AMEs default to the expected category score;
 #'     \code{ame_hypothesis} supplies other category weights.
-#'   \item FIXED: for ordinal outcomes, both the AME and the coefficient standard errors come
-#'     from a within-imputation bootstrap (\code{ame_boot_n}, weights held fixed). The polr
-#'     sandwich vcov understated the slope SE and gave unreliable AME SEs.
+#'   \item FIXED: for ordinal outcomes, AME standard errors come from a within-imputation
+#'     bootstrap (\code{ame_boot_n}, weights held fixed), and coefficient standard errors use
+#'     the model-based (Hessian) vcov. The polr sandwich vcov was unreliable for both, and a
+#'     bootstrap SD of the coefficient is inflated by resamples with (quasi-)separation.
+#'     Bootstrap coefficient draws are kept in \code{imputation_results[[i]]$coef_boot}.
 #'   \item NEW: \code{ame_scale} multiplies the AME and its SE (e.g. 2 for an outcome
 #'     rescaled as (y - 1) / 2).
 #'   \item FIXED: ordinal models pool only the slope coefficients (thresholds excluded).
@@ -54,7 +56,7 @@
 #'   per-category AMEs, one per outcome level in order. NULL (default) = scores 0, 1, 2, ...
 #' @param ame_scale Numeric. Multiplier applied to the AME and its SE (default: 1)
 #' @param ame_boot_n Integer. Ordinal outcomes only: bootstrap resamples per imputation
-#'   for the AME and coefficient standard errors (default: 500). Weights are treated as fixed.
+#'   for the AME standard error (default: 500). Weights are treated as fixed.
 #' @param verbose Logical. Print progress messages (default: TRUE)
 #'
 #' @return A list containing:
@@ -351,7 +353,7 @@ cbps_weighted_analysis <- function(
   outcome_formula <- as.formula(paste(outcome_var, "~",
                                       paste(c(treatment_var, additional_predictors), collapse = " + ")))
 
-  se_label <- if (is_ordinal) paste0("bootstrap_fixed_weights_B", ame_boot_n) else paste0("robust_", robust_type)
+  se_label <- if (is_ordinal) "model_based_hessian" else paste0("robust_", robust_type)
 
   if (verbose) {
     cat("  Outcome formula:", deparse(outcome_formula), "\n")
@@ -434,14 +436,7 @@ cbps_weighted_analysis <- function(
   vcov_fallback_warned <- FALSE
   get_vcov <- function(fit, full = FALSE) {
     V <- if (is_ordinal) {
-      tryCatch(sandwich::sandwich(fit), error = function(e) {
-        if (!vcov_fallback_warned) {
-          warning("Robust vcov failed for polr (", e$message,
-                  "); using model-based vcov instead.", call. = FALSE)
-          vcov_fallback_warned <<- TRUE
-        }
-        vcov(fit)
-      })
+      vcov(fit)  # model-based (Hessian); the polr sandwich was unreliable here
     } else {
       sandwich::vcovHC(fit, type = robust_type)
     }
@@ -520,7 +515,7 @@ cbps_weighted_analysis <- function(
       return(list(estimate = est * ame_scale,
                   variance = stats::var(ame_boot[ok]) * ame_scale^2,
                   n_boot_ok = n_ok,
-                  vcov_coef = stats::cov(coef_boot[ok, , drop = FALSE])))
+                  coef_boot = coef_boot[ok, , drop = FALSE]))
     }
 
     d$.w <- w
@@ -580,15 +575,6 @@ cbps_weighted_analysis <- function(
         }
       )
 
-      # ---- FIXED: ordinal coefficient SEs come from the same bootstrap ----
-      if (is_ordinal) {
-        if (!is.null(ame_i$vcov_coef)) {
-          robust_vcov <- ame_i$vcov_coef
-        } else {
-          warning("Imputation ", imp, ": ordinal bootstrap failed; coefficient SEs use the sandwich vcov.",
-                  call. = FALSE)
-        }
-      }
 
       if (verbose) {
         cat(paste("    n =", nrow(df_imp), "- converged:", isTRUE(weighted_model$converged),
@@ -605,6 +591,7 @@ cbps_weighted_analysis <- function(
         vcov = robust_vcov,
         ame_estimate = ame_i$estimate,
         ame_boot_ok = ame_i$n_boot_ok,
+        coef_boot = ame_i$coef_boot,
         ame_variance = ame_i$variance,
         n = nrow(df_imp)
       )

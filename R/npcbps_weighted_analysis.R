@@ -15,9 +15,11 @@
 #'     default AME is on the expected category score (scores 0, 1, 2, ...);
 #'     \code{ame_hypothesis} lets you supply other weights, e.g. c(0, 0, 0, 1, 1)
 #'     for the AME on P(top two categories).
-#'   \item FIXED: for ordinal outcomes, both the AME and the coefficient standard errors come
-#'     from a within-imputation bootstrap (\code{ame_boot_n}, weights held fixed). The polr
-#'     sandwich vcov understated the slope SE and gave unreliable AME SEs.
+#'   \item FIXED: for ordinal outcomes, AME standard errors come from a within-imputation
+#'     bootstrap (\code{ame_boot_n}, weights held fixed), and coefficient standard errors use
+#'     the model-based (Hessian) vcov. The polr sandwich vcov was unreliable for both, and a
+#'     bootstrap SD of the coefficient is inflated by resamples with (quasi-)separation.
+#'     Bootstrap coefficient draws are kept in \code{imputation_results[[i]]$coef_boot}.
 #'   \item NEW: \code{ame_scale} multiplies the AME and its SE, e.g. 2 to report a
 #'     fractional-logit AME for an outcome rescaled as (y - 1) / 2 in original units.
 #'   \item FIXED: ordinal models pool only the slope coefficients (thresholds are
@@ -66,7 +68,7 @@
 #'   (AME on the expected category score).
 #' @param ame_scale Numeric. Multiplier applied to the AME and its SE (default: 1).
 #' @param ame_boot_n Integer. Ordinal outcomes only: bootstrap resamples per imputation
-#'   for the AME and coefficient standard errors (default: 500). Weights are treated as fixed.
+#'   for the AME standard error (default: 500). Weights are treated as fixed.
 #' @param verbose Logical. Whether to print progress messages (default: TRUE)
 #'
 #' @return A list containing:
@@ -549,7 +551,7 @@ npcbps_weighted_analysis <- function(
     cat("DEBUG: Outcome formula:", deparse(outcome_formula), "\n")
     cat("DEBUG: Outcome family:", fam_label, "\n")
     cat("DEBUG: Standard errors:",
-        if (is_ordinal) paste0("bootstrap (B = ", ame_boot_n, ", weights fixed)") else if (!robust_se) "model-based" else paste0("robust (", se_type, ")"),
+        if (is_ordinal) paste0("coefficients model-based (Hessian); AME bootstrap (B = ", ame_boot_n, ", weights fixed)") else if (!robust_se) "model-based" else paste0("robust (", se_type, ")"),
         "\n")
   }
 
@@ -573,14 +575,7 @@ npcbps_weighted_analysis <- function(
     V <- if (!robust_se) {
       vcov(m)
     } else if (is_ordinal) {
-      tryCatch(sandwich::sandwich(m), error = function(e) {
-        if (!vcov_fallback_warned) {
-          warning("Robust vcov failed for polr (", e$message,
-                  "); using model-based vcov instead.", call. = FALSE)
-          vcov_fallback_warned <<- TRUE
-        }
-        vcov(m)
-      })
+      vcov(m)  # model-based (Hessian); the polr sandwich was unreliable here
     } else {
       sandwich::vcovHC(m, type = se_type)
     }
@@ -659,7 +654,7 @@ npcbps_weighted_analysis <- function(
       return(list(estimate = est * ame_scale,
                   variance = stats::var(ame_boot[ok]) * ame_scale^2,
                   n_boot_ok = n_ok,
-                  vcov_coef = stats::cov(coef_boot[ok, , drop = FALSE])))
+                  coef_boot = coef_boot[ok, , drop = FALSE]))
     }
 
     d$.w <- w
@@ -743,15 +738,6 @@ npcbps_weighted_analysis <- function(
         }
       )
 
-      # ---- FIXED: ordinal coefficient SEs come from the same bootstrap ----
-      if (is_ordinal) {
-        if (!is.null(ame_i$vcov_coef)) {
-          model_vcov <- ame_i$vcov_coef
-        } else {
-          warning("Imputation ", imp, ": ordinal bootstrap failed; coefficient SEs use the sandwich vcov.",
-                  call. = FALSE)
-        }
-      }
 
       imputation_results[[imp]] <- list(
         data = df_imp,
@@ -763,6 +749,7 @@ npcbps_weighted_analysis <- function(
         vcov = model_vcov,
         ame_estimate = ame_i$estimate,
         ame_boot_ok = ame_i$n_boot_ok,
+        coef_boot = ame_i$coef_boot,
         ame_variance = ame_i$variance,
         n = nrow(df_imp)
       )
@@ -894,7 +881,7 @@ npcbps_weighted_analysis <- function(
 
   m <- n_successful
   df_obs <- imputation_results[[1]]$model$df.residual
-  se_label <- if (is_ordinal) paste0("bootstrap_fixed_weights_B", ame_boot_n) else if (!robust_se) "model_based" else paste0("robust_", se_type)
+  se_label <- if (is_ordinal) "model_based_hessian" else if (!robust_se) "model_based" else paste0("robust_", se_type)
 
   # Coefficients (cbind keeps a parameters x imputations matrix even with one coefficient)
   Q_m <- do.call(cbind, lapply(imputation_results, function(x) x$coefficients))
