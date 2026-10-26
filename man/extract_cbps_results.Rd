@@ -2,61 +2,77 @@
 % Please edit documentation in R/extract_cbps_results.R
 \name{extract_cbps_results}
 \alias{extract_cbps_results}
-\title{Extract CBPS Results into Structured Format}
+\title{Extract NPCBPS Results into Structured Format}
 \usage{
-extract_cbps_results(cbps_results, include_balance_details = TRUE)
+extract_cbps_results(
+  cbps_results,
+  include_balance_details = TRUE,
+  smd_threshold = 0.1,
+  corr_threshold = 0.1,
+  vr_range = c(0.5, 2),
+  robust_type = "HC0"
+)
 }
 \arguments{
-\item{cbps_results}{List. Output from \code{\link{cbps_weighted_analysis}}}
+\item{cbps_results}{List. Output from \code{npcbps_weighted_analysis()}}
 
-\item{include_balance_details}{Logical. Whether to include detailed balance statistics (default: TRUE)}
+\item{include_balance_details}{Logical. Return full list (TRUE) or a simple
+estimates data frame (FALSE). Default TRUE.}
+
+\item{smd_threshold}{Numeric. |SMD| threshold for binary treatments (default 0.1)}
+
+\item{corr_threshold}{Numeric. |r| threshold for continuous treatments (default 0.1)}
+
+\item{vr_range}{Numeric length 2. Acceptable variance ratio range (default c(0.5, 2))}
+
+\item{robust_type}{Character. Sandwich estimator type, used only when the results
+object has no stored vcov (default "HC0")}
 }
 \value{
-If \code{include_balance_details = TRUE}, returns a list containing:
+If \code{include_balance_details = TRUE}, a list containing:
 \itemize{
-\item \code{estimates}: Combined GLM and bootstrap estimates
-\item \code{balance}: Detailed balance statistics
+\item \code{estimates}: Imputation-1 model estimates (robust SEs) + bootstrap,
+with pooled AME columns on the treatment row
+\item \code{balance}: Per-covariate balance summarized across imputations
+\item \code{balance_by_imputation}: One row per covariate per imputation
 \item \code{sample_sizes}: Sample size information
-\item \code{summary_stats}: Summary balance metrics
+\item \code{summary_stats}: Overall balance metrics across imputations
+\item \code{pooled_estimates}: Rubin's rules pooled coefficients
+\item \code{pooled_ame}: Rubin's rules pooled AME (PRIMARY EFFECT, outcome scale)
+\item \code{ame_by_imputation}: AME estimate and variance from each imputation
+\item \code{treatment_type}: "binary" or "continuous"
+\item \code{balance_statistic}: "|SMD|" or "|r|"
+\item \code{family_label}: description of the outcome model
+\item \code{coef_scale}: "response" or "link"
 }
-
-If \code{include_balance_details = FALSE}, returns a data frame with model estimates and basic information.
 }
 \description{
-Extracts key results from CBPS analysis into a structured format suitable for
-visualization and further analysis.
+Extracts key results from \code{npcbps_weighted_analysis()} into a structured
+format suitable for tables, visualization, and further analysis.
 }
 \details{
-This function processes the complex output from CBPS analysis and creates clean,
-structured data frames suitable for:
+REVISION NOTES (changes for the updated npcbps_weighted_analysis):
 \itemize{
-\item Creating visualization plots
-\item Comparing multiple models
-\item Generating publication tables
-\item Further statistical analysis
+\item NEW: returns the pooled average marginal effect (\code{pooled_ame}) and the
+per-imputation AMEs (\code{ame_by_imputation}). AME columns are also joined onto
+the treatment row of \code{estimates}, so \code{quick_results_summary()} shows them.
+\item CHANGED: single-imputation SEs now reuse the vcov the analysis function already
+computed (\code{imputation_results[[1]]$vcov}). This works for glm families and for
+ordinal (polr) models, where \code{sandwich::vcovHC()} is not available. Falls back
+to recomputing for older results objects that lack a stored vcov.
+\item NEW: returns \code{family_label} and \code{coef_scale} ("response" for gaussian,
+"link" otherwise) so tables can say whether coefficients are log-odds.
+\item Works with results from the previous version of npcbps_weighted_analysis
+(no AME): AME outputs are then NULL / NA.
 }
 
-The function automatically handles different column naming conventions from
-different versions of the WeightIt and cobalt packages.
+Balance is summarized across ALL imputations using the statistic appropriate
+to the treatment type:
+\itemize{
+\item Binary treatment: |SMD| (primary; raw difference for binary covariates)
+plus variance ratio (secondary)
+\item Continuous treatment: |r|, the weighted treatment-covariate correlation
 }
-\examples{
-\dontrun{
-# After running CBPS analysis
-results <- cbps_weighted_analysis(...)
-
-# Extract detailed results
-detailed <- extract_cbps_results(results, include_balance_details = TRUE)
-
-# Access components
-detailed$estimates        # Model and bootstrap estimates
-detailed$balance         # Balance statistics
-detailed$sample_sizes    # Sample size info
-
-# Extract simple results for visualization
-simple <- extract_cbps_results(results, include_balance_details = FALSE)
-}
-
-}
-\seealso{
-\code{\link{cbps_weighted_analysis}}, \code{\link{quick_results_summary}}
+Pooled (Rubin's rules) estimates remain the primary results; for non-gaussian
+outcomes, report \code{pooled_ame} as the effect on the outcome scale.
 }

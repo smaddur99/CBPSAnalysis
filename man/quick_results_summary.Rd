@@ -6,6 +6,9 @@
 \usage{
 quick_results_summary(cbps_results)
 }
+\arguments{
+\item{cbps_results}{List. Output from \code{npcbps_weighted_analysis()}}
+}
 \description{
 Quick Results Summary for Visualization
 }

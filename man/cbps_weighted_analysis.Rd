@@ -2,7 +2,7 @@
 % Please edit documentation in R/cbps_weighted_anaylsis.R
 \name{cbps_weighted_analysis}
 \alias{cbps_weighted_analysis}
-\title{CBPS Propensity Score Weighted GLM Analysis}
+\title{CBPS Propensity Score Weighted GLM Analysis with Proper Multiple Imputation}
 \usage{
 cbps_weighted_analysis(
   data,
@@ -16,12 +16,16 @@ cbps_weighted_analysis(
   mice_method = "pmm",
   mice_seed = 500,
   cbps_estimand = "ATE",
-  cbps_stop_method = "es.mean",
+  cbps_stop_method = NULL,
   bootstrap_n = 1000,
   bootstrap_seed = 20250417,
+  bootstrap_imputation = 1,
   balance_threshold_m = 0.1,
   balance_threshold_v = 2,
+  balance_threshold_r = 0.1,
+  robust_type = "HC0",
   family = gaussian(),
+  ordinal_boot_n = 500,
   verbose = TRUE
 )
 }
@@ -32,7 +36,7 @@ cbps_weighted_analysis(
 
 \item{treatment_var}{Character. Name of the treatment variable (x-variable)}
 
-\item{additional_predictors}{Character vector. Additional fixed effects/random effects to include in the outcome model}
+\item{additional_predictors}{Character vector. Additional terms for the outcome model}
 
 \item{imputation_vars}{Character vector. Variables to impute missing values for}
 
@@ -42,102 +46,132 @@ cbps_weighted_analysis(
 
 \item{mice_m}{Integer. Number of multiple imputations (default: 5)}
 
-\item{mice_method}{Character. MICE imputation method (default: "pmm" for Predictive Mean Matching)}
+\item{mice_method}{Character. MICE imputation method (default: "pmm")}
 
 \item{mice_seed}{Integer. Random seed for MICE imputation (default: 500)}
 
-\item{cbps_estimand}{Character. CBPS estimand: "ATE" (Average Treatment Effect) or "ATT" (Average Treatment on Treated) (default: "ATE")}
+\item{cbps_estimand}{Character. "ATE" or "ATT" (default: "ATE")}
 
-\item{cbps_stop_method}{Character. Balance criteria for tuning (default: "es.mean")}
+\item{cbps_stop_method}{Deprecated. Not used by CBPS; retained so existing calls don't break.}
 
-\item{bootstrap_n}{Integer. Number of bootstrap samples (default: 1000)}
+\item{bootstrap_n}{Integer. Number of bootstrap samples (default: 1000, 0 to skip)}
 
 \item{bootstrap_seed}{Integer. Random seed for bootstrap (default: 20250417)}
 
-\item{balance_threshold_m}{Numeric. Balance threshold for mean differences (default: 0.1)}
+\item{bootstrap_imputation}{Integer. Which imputation to bootstrap (default: 1)}
 
-\item{balance_threshold_v}{Numeric. Balance threshold for variance ratios (default: 2)}
+\item{balance_threshold_m}{Numeric. |SMD| threshold, binary treatments (default: 0.1)}
 
-\item{family}{A family object specifying the error distribution and link function for GLM (default: gaussian())}
+\item{balance_threshold_v}{Numeric. Variance ratio threshold; VR must fall in \link{1/v, v} (default: 2)}
 
-\item{verbose}{Logical. Whether to print progress messages (default: TRUE)}
+\item{balance_threshold_r}{Numeric. |r| threshold, continuous treatments (default: 0.1)}
+
+\item{robust_type}{Character. Sandwich SE type for glm families (default: "HC0").
+Not used for ordinal models (see \code{ordinal_boot_n}).}
+
+\item{family}{A glm family (object, function, or name) or "ordinal" (default: gaussian()).
+For binomial/quasibinomial the outcome must lie in \link{0, 1}. For "ordinal" the outcome is
+converted to an ordered factor and must have at least 3 observed levels.}
+
+\item{ordinal_boot_n}{Integer. Ordinal outcomes only: bootstrap resamples per imputation for
+the coefficient standard errors, weights held fixed (default: 500). 0 uses the Hessian vcov.}
+
+\item{verbose}{Logical. Print progress messages (default: TRUE)}
 }
 \value{
 A list containing:
 \itemize{
-\item \code{data}: Final analysis dataset with weights
-\item \code{model}: Fitted weighted GLM model
-\item \code{weights}: CBPS weight object from WeightIt
-\item \code{balance}: Balance assessment from cobalt
-\item \code{bootstrap_summary}: Bootstrap confidence intervals
-\item \code{bootstrap_results}: Full bootstrap results matrix
-\item \code{sample_sizes}: List with initial and final sample sizes
+\item \code{data}, \code{model}, \code{weights}, \code{balance}: from imputation 1 (compatibility)
+\item \code{bootstrap_summary}, \code{bootstrap_results}: bootstrap of the selected imputation's coefficients
+\item \code{pooled_results}: Rubin's rules pooled coefficients (PRIMARY EFFECT; link scale if
+non-gaussian, plus exponentiated columns for logit/log links)
+\item \code{imputation_results}: per-imputation data, weights, balance, model, vcov, bootstrap draws
+\item \code{balance_summary}: balance summary for each imputation
+\item \code{treatment_type}: "binary" or "continuous"
+\item \code{family_label}: description of the outcome model
+\item \code{sample_sizes}: initial and final sample sizes
 }
 }
 \description{
-Performs comprehensive Covariate Balancing Propensity Score (CBPS) weighted analysis
-with multiple imputation, balance assessment, and bootstrap confidence intervals.
+Performs parametric Covariate Balancing Propensity Score (CBPS) weighted analysis
+with proper multiple imputation (Rubin's rules), balance assessment appropriate to
+the treatment type, robust standard errors, and a bootstrap of one imputation's
+outcome model. The reported effect is the pooled treatment coefficient
+(exponentiated for logit/log links).
 }
 \details{
-This function implements a comprehensive workflow for CBPS analysis including:
+REVISION NOTES (changes matching the updated npcbps_weighted_analysis):
+\itemize{
+\item REMOVED: average marginal effects (AMEs). The arguments \code{ame_hypothesis},
+\code{ame_scale} and \code{ame_boot_n}, the outputs \code{pooled_ame} and
+\code{ame_by_imputation}, and the marginaleffects dependency are gone. The pooled
+treatment coefficient in \code{pooled_results} is now the reported effect.
+\item NEW: for logit- and log-link models (ordinal, binomial, quasibinomial, poisson, ...)
+\code{pooled_results} adds \code{exp_estimate}, \code{exp_ci_lower} and \code{exp_ci_upper}
+(odds ratios for logit links; rate/risk ratios for log links).
+\item CHANGED: ordinal coefficient standard errors come from a within-imputation bootstrap
+of the weighted polr fit (\code{ordinal_boot_n} resamples, weights held fixed). The Hessian
+vcov treats the weights as frequency weights and understates uncertainty. Set
+\code{ordinal_boot_n = 0} to use the Hessian instead. Bootstrap draws are kept in
+\code{imputation_results[[i]]$coef_boot}; a warning flags draws with |log-odds| > 10,
+a sign of (quasi-)separation that can inflate the bootstrap SE.
+\item FIXED: complete-data degrees of freedom for ordinal models are n minus the number of
+parameters (slopes + thresholds). polr's \code{df.residual} is sum(weights) - edf, which
+depends on how the weights are scaled.
+\item FIXED: \code{propensity_covariates} that are not also imputation variables or
+additional predictors are now carried into each imputed dataset (previously an error).
+\item FIXED: \code{mice::complete()} is called explicitly, so tidyr::complete() cannot mask it.
+}
+
+Earlier revision notes:
+\itemize{
+\item \code{family} accepts any glm family (object, function, or name) or "ordinal",
+which fits a proportional odds model with \code{MASS::polr()} (logistic link).
+\item Ordinal models pool only the slope coefficients (thresholds excluded).
+\item Convergence checks use \code{isTRUE()}, so models without \code{$converged}
+no longer fail silently in the bootstrap.
+\item \code{pooled_results} has a \code{se_method} column (same value as \code{se_type})
+so \code{extract_cbps_results()} labels SEs consistently.
+\item MASS is used via \code{::} and not attached, so MASS::select() does not mask dplyr::select().
+}
+
+Workflow:
 \enumerate{
-\item Data cleaning and missing data assessment
-\item Multiple imputation using MICE with MCAR testing
-\item CBPS propensity score estimation
-\item Covariate balance assessment
-\item Weighted GLM fitting
-\item Bootstrap confidence intervals
+\item Data cleaning and missing-data assessment (Little's MCAR test)
+\item Multiple imputation with MICE; the m completed datasets are kept separate
+\item For each imputation: estimate CBPS weights, assess balance, fit the weighted
+outcome model, and compute robust (sandwich) variance (bootstrap variance for ordinal models)
+\item Pool coefficients with Rubin's rules (Barnard-Rubin small-sample df)
+\item Bootstrap one imputation's outcome model to examine the coefficient distribution
 }
 
-The function tests for Missing Completely At Random (MCAR) assumptions and provides
-warnings about potential Missing At Random (MAR) or Missing Not At Random (MNAR) scenarios.
-}
-\examples{
-\dontrun{
-# Basic usage with continuous outcome (default gaussian family)
-results <- cbps_weighted_analysis(
-  data = my_data,
-  outcome_var = "weight_percentile",
-  treatment_var = "treatment_group",
-  additional_predictors = c("age", "gender"),
-  imputation_vars = c("mother_age", "gestational_age"),
-  verbose = TRUE
-)
+Balance statistics depend on treatment type. Binary treatments: |SMD| (primary) and
+variance ratio (secondary). Continuous treatments: absolute weighted treatment-covariate
+correlation |r|, because group-based statistics are undefined.
 
-# Binary outcome (e.g., preterm birth yes/no)
-results <- cbps_weighted_analysis(
-  data = my_data,
-  outcome_var = "preterm_birth",
-  treatment_var = "treatment_group",
-  additional_predictors = c("age", "gender"),
-  imputation_vars = c("mother_age", "gestational_age"),
-  family = binomial(),
-  verbose = TRUE
-)
-
-# With interaction terms
-results <- cbps_weighted_analysis(
-  data = my_data,
-  outcome_var = "outcome",
-  treatment_var = "treatment",
-  additional_predictors = c("var1", "var2", "var1*var2"),
-  imputation_vars = c("covariate1", "covariate2"),
-  verbose = TRUE
-)
-
-# Access results
-summary(results$model)
-results$bootstrap_summary
-results$balance
-}
-
+Robust standard errors treat the estimated weights as fixed. They correct the main problem
+with model-based standard errors under propensity weighting, but do not account for
+uncertainty in estimating the weights themselves.
 }
 \references{
-Allison, P. (2015). Imputation by predictive mean matching: Promise & peril. Statistical Horizons.
-
 Austin, P. C. (2009). Balance diagnostics for comparing the distribution of baseline
 covariates between treatment groups in propensity-score matched samples. Statistics in Medicine, 28(25), 3083-107.
 
-Li, Y., & Li, L. (2021). Propensity score analysis methods with balancing constraints:
-A Monte Carlo study. Statistical Methods in Medical Research, 30(4), 1119-1142.
+Austin, P. C. (2019). Assessing covariate balance when using the generalized propensity
+score with quantitative or continuous exposures. Statistical Methods in Medical Research, 28(5), 1365-1377.
+
+Barnard, J., & Rubin, D. B. (1999). Small-sample degrees of freedom with multiple imputation.
+Biometrika, 86(4), 948-955.
+
+Fong, C., Hazlett, C., & Imai, K. (2018). Covariate balancing propensity score for a
+continuous treatment. The Annals of Applied Statistics, 12(1), 156-177.
+
+Imai, K., & Ratkovic, M. (2014). Covariate balancing propensity score.
+Journal of the Royal Statistical Society: Series B, 76(1), 243-263.
+
+Papke, L. E., & Wooldridge, J. M. (1996). Econometric methods for fractional response
+variables with an application to 401(k) plan participation rates. Journal of Applied
+Econometrics, 11(6), 619-632.
+
+Rubin, D. B. (1987). Multiple Imputation for Nonresponse in Surveys. Wiley.
 }

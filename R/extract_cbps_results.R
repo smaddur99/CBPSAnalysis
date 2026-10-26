@@ -1,21 +1,30 @@
-#' Extract NPCBPS Results into Structured Format
+#' Extract NPCBPS / CBPS Results into Structured Format
 #'
-#' Extracts key results from \code{npcbps_weighted_analysis()} into a structured
-#' format suitable for tables, visualization, and further analysis.
+#' Extracts key results from \code{npcbps_weighted_analysis()} or
+#' \code{cbps_weighted_analysis()} into a structured format suitable for tables,
+#' visualization, Excel export (\code{export_cbps_excel()}), and further analysis.
 #'
-#' REVISION NOTES (changes for the updated npcbps_weighted_analysis):
+#' REVISION NOTES (changes for the AME-free analysis functions):
 #' \itemize{
-#'   \item NEW: returns the pooled average marginal effect (\code{pooled_ame}) and the
-#'     per-imputation AMEs (\code{ame_by_imputation}). AME columns are also joined onto
-#'     the treatment row of \code{estimates}, so \code{quick_results_summary()} shows them.
-#'   \item CHANGED: single-imputation SEs now reuse the vcov the analysis function already
-#'     computed (\code{imputation_results[[1]]$vcov}). This works for glm families and for
-#'     ordinal (polr) models, where \code{sandwich::vcovHC()} is not available. Falls back
-#'     to recomputing for older results objects that lack a stored vcov.
-#'   \item NEW: returns \code{family_label} and \code{coef_scale} ("response" for gaussian,
+#'   \item REMOVED: average marginal effects. \code{pooled_ame}, \code{ame_by_imputation}
+#'     and the \code{ame_*} columns are gone. AME outputs in older results objects are ignored.
+#'   \item NEW: the pooled (Rubin's rules) results are joined onto \code{estimates} as
+#'     \code{pooled_*} columns, so \code{quick_results_summary()} shows the reported effect
+#'     next to the imputation-1 and bootstrap estimates.
+#'   \item NEW: exponentiated pooled estimates (\code{exp_estimate}, \code{exp_ci_lower},
+#'     \code{exp_ci_upper}) are passed through for logit/log-link models, and
+#'     \code{exp_label} says what they are ("odds ratio" or "rate/risk ratio").
+#'   \item CHANGED: packages are checked with \code{requireNamespace()} instead of being
+#'     attached with \code{require()}.
+#' }
+#'
+#' Earlier revision notes:
+#' \itemize{
+#'   \item Single-imputation SEs reuse the vcov the analysis function stored
+#'     (\code{imputation_results[[1]]$vcov}): robust for glm families, bootstrap for ordinal
+#'     models. Falls back to recomputing for older results objects without a stored vcov.
+#'   \item Returns \code{family_label} and \code{coef_scale} ("response" for gaussian,
 #'     "link" otherwise) so tables can say whether coefficients are log-odds.
-#'   \item Works with results from the previous version of npcbps_weighted_analysis
-#'     (no AME): AME outputs are then NULL / NA.
 #' }
 #'
 #' Balance is summarized across ALL imputations using the statistic appropriate
@@ -25,10 +34,11 @@
 #'     plus variance ratio (secondary)
 #'   \item Continuous treatment: |r|, the weighted treatment-covariate correlation
 #' }
-#' Pooled (Rubin's rules) estimates remain the primary results; for non-gaussian
-#' outcomes, report \code{pooled_ame} as the effect on the outcome scale.
+#' The pooled (Rubin's rules) estimates are the primary results. For ordinal and
+#' logit models, report the odds ratios in the \code{exp_*} columns.
 #'
-#' @param cbps_results List. Output from \code{npcbps_weighted_analysis()}
+#' @param cbps_results List. Output from \code{npcbps_weighted_analysis()} or
+#'   \code{cbps_weighted_analysis()}
 #' @param include_balance_details Logical. Return full list (TRUE) or a simple
 #'   estimates data frame (FALSE). Default TRUE.
 #' @param smd_threshold Numeric. |SMD| threshold for binary treatments (default 0.1)
@@ -39,23 +49,25 @@
 #'
 #' @return If \code{include_balance_details = TRUE}, a list containing:
 #' \itemize{
-#'   \item \code{estimates}: Imputation-1 model estimates (robust SEs) + bootstrap,
-#'     with pooled AME columns on the treatment row
+#'   \item \code{estimates}: Imputation-1 model estimates + bootstrap, with the pooled
+#'     (Rubin's rules) results joined on as \code{pooled_*} / \code{exp_*} columns
 #'   \item \code{balance}: Per-covariate balance summarized across imputations
 #'   \item \code{balance_by_imputation}: One row per covariate per imputation
 #'   \item \code{sample_sizes}: Sample size information
 #'   \item \code{summary_stats}: Overall balance metrics across imputations
-#'   \item \code{pooled_estimates}: Rubin's rules pooled coefficients
-#'   \item \code{pooled_ame}: Rubin's rules pooled AME (PRIMARY EFFECT, outcome scale)
-#'   \item \code{ame_by_imputation}: AME estimate and variance from each imputation
+#'   \item \code{pooled_estimates}: Rubin's rules pooled coefficients (PRIMARY EFFECT),
+#'     with \code{exp_*} columns for logit/log links
 #'   \item \code{treatment_type}: "binary" or "continuous"
 #'   \item \code{balance_statistic}: "|SMD|" or "|r|"
 #'   \item \code{family_label}: description of the outcome model
 #'   \item \code{coef_scale}: "response" or "link"
+#'   \item \code{exp_label}: "odds ratio", "rate/risk ratio", or NA
 #' }
+#' If \code{include_balance_details = FALSE}, the \code{estimates} data frame with
+#' model and sample-size columns added.
 #'
 #' @export
-#' @importFrom dplyr mutate rename select group_by summarise ungroup case_when left_join any_of across matches n
+#' @importFrom dplyr %>% mutate rename select group_by summarise ungroup case_when left_join any_of across matches n
 #' @importFrom tibble tibble as_tibble
 #' @importFrom purrr imap_dfr
 extract_cbps_results <- function(cbps_results,
@@ -65,16 +77,15 @@ extract_cbps_results <- function(cbps_results,
                                  vr_range = c(0.5, 2),
                                  robust_type = "HC0") {
 
-  required_packages <- c("dplyr", "tibble", "purrr", "sandwich")
-  for (pkg in required_packages) {
-    if (!require(pkg, character.only = TRUE, quietly = TRUE)) {
+  for (pkg in c("dplyr", "tibble", "purrr", "sandwich")) {
+    if (!requireNamespace(pkg, quietly = TRUE)) {
       stop(paste("Package", pkg, "is required but not installed."))
     }
   }
 
   final_n <- cbps_results$sample_sizes$final
 
-  # ---- NEW: model description ----
+  # ---- model description ----
   family_label <- if (!is.null(cbps_results$family_label)) {
     cbps_results$family_label
   } else if (!is.null(cbps_results$model$family)) {
@@ -85,12 +96,23 @@ extract_cbps_results <- function(cbps_results,
   is_gaussian_identity <- !is.na(family_label) && grepl("^gaussian with identity", family_label)
   coef_scale <- if (is_gaussian_identity) "response" else "link"
 
+  # ---- NEW: what the exponentiated estimates mean ----
+  exp_label <- if (is.na(family_label)) {
+    NA_character_
+  } else if (grepl("^ordinal|logit link", family_label)) {
+    "odds ratio"
+  } else if (grepl("with log link", family_label)) {
+    "rate/risk ratio"
+  } else {
+    NA_character_
+  }
+
   # Helpers ---------------------------------------------------------------
   safe_min <- function(x) if (all(is.na(x))) NA_real_ else min(x, na.rm = TRUE)
   safe_max <- function(x) if (all(is.na(x))) NA_real_ else max(x, na.rm = TRUE)
   safe_mean <- function(x) if (all(is.na(x))) NA_real_ else mean(x, na.rm = TRUE)
 
-  # ---- CHANGED: coefficient table using the stored vcov when available ----
+  # Coefficient table using the stored vcov when available
   tidy_robust <- function(model, V = NULL, se_label = NULL, level = 0.95) {
     est <- stats::coef(model)
     if (is.null(V)) {
@@ -139,7 +161,26 @@ extract_cbps_results <- function(cbps_results,
     tibble::as_tibble(df)
   }
 
-  # 1. MODEL ESTIMATES (imputation 1, robust SEs) --------------------------
+  # 1. POOLED RESULTS (Rubin's rules; PRIMARY EFFECT) -----------------------
+  pooled_estimates <- if (!is.null(cbps_results$pooled_results)) {
+    cbps_results$pooled_results %>%
+      dplyr::rename(dplyr::any_of(c(
+        variable         = "term",
+        pooled_estimate  = "estimate",
+        pooled_se        = "se",
+        pooled_statistic = "statistic",
+        pooled_p_value   = "p.value",
+        pooled_conf_low  = "ci_lower",
+        pooled_conf_high = "ci_upper",
+        pooled_df        = "df",
+        pooled_fmi       = "fmi"
+      ))) %>%
+      dplyr::mutate(coef_scale = coef_scale, exp_label = exp_label)
+  } else {
+    NULL
+  }
+
+  # 2. MODEL ESTIMATES (imputation 1) ----------------------------------------
   stored_vcov <- if (length(cbps_results$imputation_results) > 0) {
     cbps_results$imputation_results[[1]]$vcov
   } else {
@@ -154,15 +195,15 @@ extract_cbps_results <- function(cbps_results,
   model_summary <- tidy_robust(cbps_results$model, V = stored_vcov, se_label = stored_se_label) %>%
     dplyr::mutate(sample_size = final_n, coef_scale = coef_scale)
 
-  # 2. BOOTSTRAP RESULTS ---------------------------------------------------
+  # 3. BOOTSTRAP RESULTS -------------------------------------------------------
   if (!is.null(cbps_results$bootstrap_summary)) {
     bootstrap_results <- cbps_results$bootstrap_summary %>%
       dplyr::rename(dplyr::any_of(c(
-        variable              = "term",
-        bootstrap_estimate    = "estimate",
-        bootstrap_se          = "se",
-        bootstrap_conf_low    = "ci_lower",
-        bootstrap_conf_high   = "ci_upper",
+        variable               = "term",
+        bootstrap_estimate     = "estimate",
+        bootstrap_se           = "se",
+        bootstrap_conf_low     = "ci_lower",
+        bootstrap_conf_high    = "ci_upper",
         bootstrap_n_successful = "n_successful"
       )))
     combined_estimates <- model_summary %>%
@@ -171,28 +212,16 @@ extract_cbps_results <- function(cbps_results,
     combined_estimates <- model_summary
   }
 
-  # ---- NEW: pooled AME, joined onto the treatment row ----
-  pooled_ame <- NULL
-  if (!is.null(cbps_results$pooled_ame)) {
-    pooled_ame <- cbps_results$pooled_ame %>%
-      dplyr::rename(dplyr::any_of(c(
-        ame_term      = "term",
-        ame_estimate  = "estimate",
-        ame_se        = "se",
-        ame_statistic = "statistic",
-        ame_p_value   = "p.value",
-        ame_conf_low  = "ci_lower",
-        ame_conf_high = "ci_upper",
-        ame_df        = "df",
-        ame_fmi       = "fmi"
-      ))) %>%
-      dplyr::mutate(variable = sub("^AME_", "", ame_term))
-
+  # ---- NEW: pooled results joined onto the estimates table ----
+  if (!is.null(pooled_estimates)) {
     combined_estimates <- combined_estimates %>%
       dplyr::left_join(
-        pooled_ame %>%
-          dplyr::select(dplyr::any_of(c("variable", "ame_estimate", "ame_se", "ame_p_value",
-                                        "ame_conf_low", "ame_conf_high", "ame_fmi", "ame_type"))),
+        pooled_estimates %>%
+          dplyr::select(dplyr::any_of(c(
+            "variable", "pooled_estimate", "pooled_se", "pooled_p_value",
+            "pooled_conf_low", "pooled_conf_high", "pooled_df", "pooled_fmi",
+            "exp_estimate", "exp_ci_lower", "exp_ci_upper", "exp_label"
+          ))),
         by = "variable"
       )
   }
@@ -207,7 +236,7 @@ extract_cbps_results <- function(cbps_results,
              ))
   }
 
-  # 3. BALANCE ACROSS ALL IMPUTATIONS --------------------------------------
+  # 4. BALANCE ACROSS ALL IMPUTATIONS --------------------------------------
   imp_list <- cbps_results$imputation_results
   if (is.null(imp_list) || length(imp_list) == 0) {
     imp_list <- list(list(balance = cbps_results$balance))
@@ -314,25 +343,6 @@ extract_cbps_results <- function(cbps_results,
     summary_stats <- NULL
   }
 
-  # 4. POOLED RESULTS ---------------------------------------------------------
-  pooled_estimates <- if (!is.null(cbps_results$pooled_results)) {
-    cbps_results$pooled_results %>%
-      dplyr::rename(dplyr::any_of(c(
-        variable         = "term",
-        pooled_estimate  = "estimate",
-        pooled_se        = "se",
-        pooled_statistic = "statistic",
-        pooled_p_value   = "p.value",
-        pooled_conf_low  = "ci_lower",
-        pooled_conf_high = "ci_upper",
-        pooled_df        = "df",
-        pooled_fmi       = "fmi"
-      ))) %>%
-      dplyr::mutate(coef_scale = coef_scale)
-  } else {
-    NULL
-  }
-
   # 5. RETURN ----------------------------------------------------------------
   list(
     estimates             = combined_estimates,
@@ -348,29 +358,34 @@ extract_cbps_results <- function(cbps_results,
     ),
     summary_stats     = summary_stats,
     pooled_estimates  = pooled_estimates,
-    pooled_ame        = pooled_ame,
-    ame_by_imputation = cbps_results$ame_by_imputation,
     treatment_type    = treatment_type,
     balance_statistic = balance_statistic,
     family_label      = family_label,
-    coef_scale        = coef_scale
+    coef_scale        = coef_scale,
+    exp_label         = exp_label
   )
 }
 
 
 #' Quick Results Summary for Visualization
 #'
-#' @param cbps_results List. Output from \code{npcbps_weighted_analysis()}
+#' One row per model term with the pooled (Rubin's rules) result, the exponentiated
+#' estimate for logit/log links, the imputation-1 estimate, and the bootstrap estimate.
+#'
+#' @param cbps_results List. Output from \code{npcbps_weighted_analysis()} or
+#'   \code{cbps_weighted_analysis()}
 #' @export
 quick_results_summary <- function(cbps_results) {
   result <- extract_cbps_results(cbps_results, include_balance_details = FALSE)
 
   desired_cols <- c(
     "variable", "family_label", "coef_scale",
+    "pooled_estimate", "pooled_se", "pooled_p_value", "pooled_conf_low", "pooled_conf_high",
+    "pooled_fmi",
+    "exp_estimate", "exp_ci_lower", "exp_ci_upper", "exp_label",
     "glm_estimate", "glm_se", "glm_p_value", "glm_conf_low", "glm_conf_high", "se_type",
     "bootstrap_estimate", "bootstrap_se", "bootstrap_conf_low", "bootstrap_conf_high",
     "bootstrap_n_successful",
-    "ame_estimate", "ame_se", "ame_p_value", "ame_conf_low", "ame_conf_high", "ame_type",
     "final_sample_size"
   )
 

@@ -21,7 +21,11 @@ npcbps_weighted_analysis(
   bootstrap_imputation = 1,
   balance_threshold_m = 0.1,
   balance_threshold_v = 2,
+  balance_threshold_r = 0.1,
+  robust_se = TRUE,
+  se_type = "HC0",
   family = gaussian(),
+  ordinal_boot_n = 500,
   verbose = TRUE
 )
 }
@@ -46,103 +50,123 @@ npcbps_weighted_analysis(
 
 \item{mice_seed}{Integer. Random seed for MICE imputation (default: 500)}
 
-\item{cbps_estimand}{Character. CBPS estimand: "ATE" (Average Treatment Effect) or "ATT" (Average Treatment on Treated) (default: "ATE")}
+\item{cbps_estimand}{Character. CBPS estimand: "ATE" or "ATT" (default: "ATE")}
 
-\item{bootstrap_n}{Integer. Number of bootstrap samples for the GLM (default: 1000, set to 0 to skip)}
+\item{bootstrap_n}{Integer. Number of bootstrap samples for the outcome model (default: 1000, set to 0 to skip)}
 
 \item{bootstrap_seed}{Integer. Random seed for bootstrap (default: 20250417)}
 
-\item{bootstrap_imputation}{Integer. Which imputation to use for bootstrap (default: 1 = first imputation)}
+\item{bootstrap_imputation}{Integer. Which imputation to use for bootstrap (default: 1)}
 
-\item{balance_threshold_m}{Numeric. Balance threshold for mean differences (default: 0.1)}
+\item{balance_threshold_m}{Numeric. |SMD| threshold for binary treatments (default: 0.1)}
 
-\item{balance_threshold_v}{Numeric. Balance threshold for variance ratios (default: 2)}
+\item{balance_threshold_v}{Numeric. Variance ratio threshold for binary treatments (default: 2)}
 
-\item{family}{A family object specifying the error distribution and link function for GLM (default: gaussian())}
+\item{balance_threshold_r}{Numeric. |r| threshold for continuous treatments (default: 0.1)}
+
+\item{robust_se}{Logical. Use robust (sandwich) standard errors for pooling (default: TRUE)}
+
+\item{se_type}{Character. Sandwich estimator type passed to \code{sandwich::vcovHC} for glm
+families (default: "HC0"). Not used for ordinal models (see \code{ordinal_boot_n}).}
+
+\item{family}{A glm family (object, function, or name) or the string "ordinal"
+(default: gaussian()). For binomial/quasibinomial the outcome must lie in \link{0, 1}.
+For "ordinal" the outcome is converted to an ordered factor and must have at least 3 levels.}
+
+\item{ordinal_boot_n}{Integer. Ordinal outcomes only: bootstrap resamples per imputation for
+the coefficient standard errors, weights held fixed (default: 500). 0 uses the Hessian vcov.}
 
 \item{verbose}{Logical. Whether to print progress messages (default: TRUE)}
 }
 \value{
 A list containing:
 \itemize{
-\item \code{data}: Final analysis dataset from first imputation (for compatibility)
-\item \code{model}: Fitted weighted GLM model from first imputation (for compatibility)
-\item \code{weights}: NPCBPS weight object from first imputation (for compatibility)
-\item \code{balance}: Balance assessment from first imputation (for compatibility)
-\item \code{bootstrap_summary}: Bootstrap CIs from the selected imputation's GLM
-\item \code{bootstrap_results}: Bootstrap distribution matrix from the selected imputation's GLM
-\item \code{pooled_results}: Rubin's rules pooled coefficients (PRIMARY RESULTS)
-\item \code{imputation_results}: List of results from each imputation
-\item \code{balance_summary}: Summary of balance across imputations
-\item \code{sample_sizes}: List with initial and final sample sizes
+\item \code{data}, \code{model}, \code{weights}, \code{balance}: from the first imputation (compatibility)
+\item \code{balance_by_imputation}: balance statistics for every covariate in every imputation
+\item \code{balance_summary}: per-covariate balance across imputations (USE THIS FOR REPORTING)
+\item \code{treatment_type}: "binary" or "continuous"
+\item \code{family_label}: description of the outcome model
+\item \code{pooled_results}: Rubin's rules pooled model coefficients (PRIMARY EFFECT; link
+scale for non-gaussian families, plus exponentiated columns for logit/log links)
+\item \code{bootstrap_summary}, \code{bootstrap_results}: bootstrap of the selected imputation's coefficients
+\item \code{imputation_results}: list of results from each imputation
+\item \code{sample_sizes}: initial and final sample sizes
 }
 }
 \description{
 Performs comprehensive Nonparametric Covariate Balancing Propensity Score (NPCBPS) weighted analysis
-with proper multiple imputation using Rubin's rules, plus bootstrap of a single GLM model.
+with proper multiple imputation using Rubin's rules, plus bootstrap of a single outcome model.
+The reported effect is the pooled treatment coefficient (exponentiated for logit/log links).
 }
 \details{
-This function implements proper multiple imputation workflow:
+REVISION NOTES (changes from previous version):
+\itemize{
+\item REMOVED: average marginal effects (AMEs). The arguments \code{ame_hypothesis},
+\code{ame_scale} and \code{ame_boot_n}, the outputs \code{pooled_ame} and
+\code{ame_by_imputation}, and the marginaleffects dependency are gone. The pooled
+treatment coefficient in \code{pooled_results} is now the reported effect.
+\item NEW: for logit- and log-link models (ordinal, binomial, quasibinomial, poisson, ...)
+\code{pooled_results} adds \code{exp_estimate}, \code{exp_ci_lower} and \code{exp_ci_upper}
+(odds ratios for logit links; rate/risk ratios for log links).
+\item CHANGED: ordinal coefficient standard errors come from a within-imputation bootstrap
+of the weighted polr fit (\code{ordinal_boot_n} resamples, weights held fixed). The Hessian
+vcov treats the weights as frequency weights and understates uncertainty. Set
+\code{ordinal_boot_n = 0} to use the Hessian instead. Bootstrap draws are kept in
+\code{imputation_results[[i]]$coef_boot}; a warning flags draws with |log-odds| > 10,
+a sign of (quasi-)separation that can inflate the bootstrap SE.
+\item FIXED: complete-data degrees of freedom for ordinal models are n minus the number of
+parameters (slopes + thresholds). polr's \code{df.residual} is sum(weights) - edf, which
+depends on how the weights are scaled.
+\item FIXED: \code{propensity_covariates} that are not also imputation variables or
+additional predictors are now carried into each imputed dataset (previously an error).
+\item FIXED: \code{mice::complete()} is called explicitly, so tidyr::complete() cannot mask it.
+}
+
+Earlier revision notes:
+\itemize{
+\item \code{family} accepts any glm family (object, function, or name) or "ordinal",
+which fits a proportional odds model with \code{MASS::polr()} (logistic link).
+\item Ordinal models pool only the slope coefficients (thresholds are excluded).
+\item Convergence checks use \code{isTRUE()}; Barnard-Rubin df no longer return NaN
+when the between-imputation variance is zero.
+\item MASS is used via \code{::} and not attached, so MASS::select() does not mask dplyr::select().
+\item Balance metric depends on treatment type: |SMD| plus variance ratios for
+binary treatments, |r| for continuous treatments.
+\item Balance is collected from ALL imputations and summarized per covariate.
+\item Pooled standard errors use robust (sandwich) variance estimates by default.
+}
+
+Workflow:
 \enumerate{
 \item Data cleaning and missing data assessment with MCAR testing
 \item Multiple imputation using MICE (m imputations kept separate)
-\item For EACH imputation:
-\itemize{
-\item Estimate Nonparametric CBPS propensity scores
-\item Assess covariate balance
-\item Fit weighted GLM
-}
-\item Pool results using Rubin's rules (PRIMARY inference)
-\item Bootstrap ONE of the fitted GLM models to examine distribution
+\item For EACH imputation: NPCBPS weights, balance assessment, and weighted outcome
+model with robust SEs (bootstrap SEs for ordinal models)
+\item Summarize balance across all imputations
+\item Pool coefficients using Rubin's rules
+\item Bootstrap ONE of the fitted outcome models
 }
 
-The bootstrap provides the distribution of coefficients for a single imputation's model,
-while Rubin's rules provides the primary inference accounting for imputation uncertainty.
-
-The nonparametric CBPS method uses kernel-based estimation and does not assume
-a parametric form for the propensity score model. This can be more flexible than
-parametric CBPS but may require larger sample sizes.
-
-The function tests for Missing Completely At Random (MCAR) assumptions and provides
-warnings about potential Missing At Random (MAR) or Missing Not At Random (MNAR) scenarios.
+Robust standard errors treat the estimated weights as fixed. They correct the main problem
+with model-based standard errors under propensity weighting, but do not account for
+uncertainty in estimating the weights themselves.
 }
 \examples{
 \dontrun{
-# Basic usage with continuous outcome (default gaussian family)
-results <- npcbps_weighted_analysis(
-  data = my_data,
-  outcome_var = "weight_percentile",
-  treatment_var = "treatment_group",
-  additional_predictors = c("age", "gender"),
-  imputation_vars = c("mother_age", "gestational_age"),
-  verbose = TRUE
+# Fractional logit for mpss rescaled to [0, 1]
+res_mpss <- npcbps_weighted_analysis(
+  data = mad_edits, outcome_var = "mpss.mgm_rescale", treatment_var = "my_treatment",
+  imputation_vars = c("mother_age"), family = quasibinomial()
 )
 
-# Binary outcome (e.g., preterm birth yes/no)
-results <- npcbps_weighted_analysis(
-  data = my_data,
-  outcome_var = "preterm_birth",
-  treatment_var = "treatment_group",
-  additional_predictors = c("age", "gender"),
-  imputation_vars = c("mother_age", "gestational_age"),
-  family = binomial(),
-  verbose = TRUE
+# Ordinal pregnancy advice (proportional odds model)
+res_adv <- npcbps_weighted_analysis(
+  data = mad_edits, outcome_var = "preg_ad_ord", treatment_var = "my_treatment",
+  imputation_vars = c("mother_age"), family = "ordinal"
 )
 
-# With interaction terms
-results <- npcbps_weighted_analysis(
-  data = my_data,
-  outcome_var = "outcome",
-  treatment_var = "treatment",
-  additional_predictors = c("var1", "var2", "var1*var2"),
-  imputation_vars = c("covariate1", "covariate2"),
-  verbose = TRUE
-)
-
-# Access results
-results$pooled_results  # PRIMARY - Rubin's rules
-results$bootstrap_summary  # Bootstrap distribution of one GLM
-results$balance
+res_adv$pooled_results    # PRIMARY effect: log-odds, with odds ratios in exp_* columns
+res_adv$balance_summary   # balance across imputations
 }
 
 }
@@ -152,12 +176,19 @@ Allison, P. (2015). Imputation by predictive mean matching: Promise & peril. Sta
 Austin, P. C. (2009). Balance diagnostics for comparing the distribution of baseline
 covariates between treatment groups in propensity-score matched samples. Statistics in Medicine, 28(25), 3083-107.
 
+Austin, P. C. (2019). Assessing covariate balance when using the generalized propensity
+score with quantitative or continuous exposures. Statistical Methods in Medical Research, 28(5), 1365-1377.
+
 Barnard, J., & Rubin, D. B. (1999). Small-sample degrees of freedom with multiple imputation.
 Biometrika, 86(4), 948-955.
 
 Fong, C., Hazlett, C., & Imai, K. (2018). Covariate balancing propensity score for a
 continuous treatment: Application to the efficacy of political advertisements.
 The Annals of Applied Statistics, 12(1), 156-177.
+
+Papke, L. E., & Wooldridge, J. M. (1996). Econometric methods for fractional response
+variables with an application to 401(k) plan participation rates. Journal of Applied
+Econometrics, 11(6), 619-632.
 
 Rubin, D. B. (1987). Multiple Imputation for Nonresponse in Surveys. Wiley.
 

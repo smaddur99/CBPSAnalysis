@@ -2,38 +2,39 @@
 #'
 #' Performs comprehensive Nonparametric Covariate Balancing Propensity Score (NPCBPS) weighted analysis
 #' with proper multiple imputation using Rubin's rules, plus bootstrap of a single outcome model.
+#' The reported effect is the pooled treatment coefficient (exponentiated for logit/log links).
 #'
 #' REVISION NOTES (changes from previous version):
 #' \itemize{
-#'   \item NEW: \code{family} now accepts any glm family (object, function, or name,
-#'     e.g. \code{quasibinomial()}, \code{quasibinomial}, or \code{"quasibinomial"})
-#'     or the string \code{"ordinal"}, which fits a proportional odds model with
-#'     \code{MASS::polr()}.
-#'   \item NEW: Average marginal effects (AMEs) of the treatment are computed in
-#'     every imputation with \code{marginaleffects}, weighted by the NPCBPS weights,
-#'     and pooled with Rubin's rules (\code{pooled_ame}). For ordinal outcomes the
-#'     default AME is on the expected category score (scores 0, 1, 2, ...);
-#'     \code{ame_hypothesis} lets you supply other weights, e.g. c(0, 0, 0, 1, 1)
-#'     for the AME on P(top two categories).
-#'   \item FIXED: for ordinal outcomes, AME standard errors come from a within-imputation
-#'     bootstrap (\code{ame_boot_n}, weights held fixed), and coefficient standard errors use
-#'     the model-based (Hessian) vcov. The polr sandwich vcov was unreliable for both, and a
-#'     bootstrap SD of the coefficient is inflated by resamples with (quasi-)separation.
-#'     Bootstrap coefficient draws are kept in \code{imputation_results[[i]]$coef_boot}.
-#'   \item NEW: \code{ame_scale} multiplies the AME and its SE, e.g. 2 to report a
-#'     fractional-logit AME for an outcome rescaled as (y - 1) / 2 in original units.
-#'   \item FIXED: ordinal models pool only the slope coefficients (thresholds are
-#'     excluded), so coefficient and variance vectors stay aligned.
-#'   \item FIXED: convergence checks use \code{isTRUE()}, so models without a
-#'     \code{$converged} element no longer fail silently in the bootstrap.
-#'   \item FIXED: Barnard-Rubin degrees of freedom no longer return NaN when the
-#'     between-imputation variance is zero (e.g. no missing data).
-#'   \item MASS and marginaleffects are used via \code{::} and are not attached,
-#'     so MASS::select() does not mask dplyr::select() in your session.
+#'   \item REMOVED: average marginal effects (AMEs). The arguments \code{ame_hypothesis},
+#'     \code{ame_scale} and \code{ame_boot_n}, the outputs \code{pooled_ame} and
+#'     \code{ame_by_imputation}, and the marginaleffects dependency are gone. The pooled
+#'     treatment coefficient in \code{pooled_results} is now the reported effect.
+#'   \item NEW: for logit- and log-link models (ordinal, binomial, quasibinomial, poisson, ...)
+#'     \code{pooled_results} adds \code{exp_estimate}, \code{exp_ci_lower} and \code{exp_ci_upper}
+#'     (odds ratios for logit links; rate/risk ratios for log links).
+#'   \item CHANGED: ordinal coefficient standard errors come from a within-imputation bootstrap
+#'     of the weighted polr fit (\code{ordinal_boot_n} resamples, weights held fixed). The Hessian
+#'     vcov treats the weights as frequency weights and understates uncertainty. Set
+#'     \code{ordinal_boot_n = 0} to use the Hessian instead. Bootstrap draws are kept in
+#'     \code{imputation_results[[i]]$coef_boot}; a warning flags draws with |log-odds| > 10,
+#'     a sign of (quasi-)separation that can inflate the bootstrap SE.
+#'   \item FIXED: complete-data degrees of freedom for ordinal models are n minus the number of
+#'     parameters (slopes + thresholds). polr's \code{df.residual} is sum(weights) - edf, which
+#'     depends on how the weights are scaled.
+#'   \item FIXED: \code{propensity_covariates} that are not also imputation variables or
+#'     additional predictors are now carried into each imputed dataset (previously an error).
+#'   \item FIXED: \code{mice::complete()} is called explicitly, so tidyr::complete() cannot mask it.
 #' }
 #'
 #' Earlier revision notes:
 #' \itemize{
+#'   \item \code{family} accepts any glm family (object, function, or name) or "ordinal",
+#'     which fits a proportional odds model with \code{MASS::polr()} (logistic link).
+#'   \item Ordinal models pool only the slope coefficients (thresholds are excluded).
+#'   \item Convergence checks use \code{isTRUE()}; Barnard-Rubin df no longer return NaN
+#'     when the between-imputation variance is zero.
+#'   \item MASS is used via \code{::} and not attached, so MASS::select() does not mask dplyr::select().
 #'   \item Balance metric depends on treatment type: |SMD| plus variance ratios for
 #'     binary treatments, |r| for continuous treatments.
 #'   \item Balance is collected from ALL imputations and summarized per covariate.
@@ -59,16 +60,12 @@
 #' @param balance_threshold_r Numeric. |r| threshold for continuous treatments (default: 0.1)
 #' @param robust_se Logical. Use robust (sandwich) standard errors for pooling (default: TRUE)
 #' @param se_type Character. Sandwich estimator type passed to \code{sandwich::vcovHC} for glm
-#'   families (default: "HC0"). Ordinal models always use \code{sandwich::sandwich()} (HC0).
+#'   families (default: "HC0"). Not used for ordinal models (see \code{ordinal_boot_n}).
 #' @param family A glm family (object, function, or name) or the string "ordinal"
 #'   (default: gaussian()). For binomial/quasibinomial the outcome must lie in [0, 1].
 #'   For "ordinal" the outcome is converted to an ordered factor and must have at least 3 levels.
-#' @param ame_hypothesis Numeric vector or NULL. Ordinal outcomes only: weights applied to the
-#'   per-category AMEs, one per outcome level in order. NULL (default) uses scores 0, 1, 2, ...
-#'   (AME on the expected category score).
-#' @param ame_scale Numeric. Multiplier applied to the AME and its SE (default: 1).
-#' @param ame_boot_n Integer. Ordinal outcomes only: bootstrap resamples per imputation
-#'   for the AME standard error (default: 500). Weights are treated as fixed.
+#' @param ordinal_boot_n Integer. Ordinal outcomes only: bootstrap resamples per imputation for
+#'   the coefficient standard errors, weights held fixed (default: 500). 0 uses the Hessian vcov.
 #' @param verbose Logical. Whether to print progress messages (default: TRUE)
 #'
 #' @return A list containing:
@@ -78,9 +75,8 @@
 #'   \item \code{balance_summary}: per-covariate balance across imputations (USE THIS FOR REPORTING)
 #'   \item \code{treatment_type}: "binary" or "continuous"
 #'   \item \code{family_label}: description of the outcome model
-#'   \item \code{pooled_ame}: Rubin's rules pooled average marginal effect of the treatment (PRIMARY EFFECT)
-#'   \item \code{ame_by_imputation}: AME estimate and variance from each imputation
-#'   \item \code{pooled_results}: Rubin's rules pooled model coefficients (link scale for non-gaussian families)
+#'   \item \code{pooled_results}: Rubin's rules pooled model coefficients (PRIMARY EFFECT; link
+#'     scale for non-gaussian families, plus exponentiated columns for logit/log links)
 #'   \item \code{bootstrap_summary}, \code{bootstrap_results}: bootstrap of the selected imputation's coefficients
 #'   \item \code{imputation_results}: list of results from each imputation
 #'   \item \code{sample_sizes}: initial and final sample sizes
@@ -91,18 +87,12 @@
 #' \enumerate{
 #'   \item Data cleaning and missing data assessment with MCAR testing
 #'   \item Multiple imputation using MICE (m imputations kept separate)
-#'   \item For EACH imputation: NPCBPS weights, balance assessment, weighted outcome
-#'     model with robust SEs, and the weighted AME of the treatment
+#'   \item For EACH imputation: NPCBPS weights, balance assessment, and weighted outcome
+#'     model with robust SEs (bootstrap SEs for ordinal models)
 #'   \item Summarize balance across all imputations
-#'   \item Pool coefficients and AMEs using Rubin's rules
+#'   \item Pool coefficients using Rubin's rules
 #'   \item Bootstrap ONE of the fitted outcome models
 #' }
-#'
-#' AMEs: for a continuous treatment, the weighted average derivative of the expected outcome
-#' with respect to the treatment (\code{marginaleffects::avg_slopes}); for a binary treatment,
-#' the weighted average contrast between its two values (\code{marginaleffects::avg_comparisons}).
-#' Estimates are on the outcome's response scale. For a gaussian model with no interactions
-#' the AME equals the treatment coefficient, which is a useful check.
 #'
 #' Robust standard errors treat the estimated weights as fixed. They correct the main problem
 #' with model-based standard errors under propensity weighting, but do not account for
@@ -134,28 +124,20 @@
 #'
 #' @examples
 #' \dontrun{
-#' # Fractional logit for mpss rescaled to [0, 1]; AME reported in mpss units
+#' # Fractional logit for mpss rescaled to [0, 1]
 #' res_mpss <- npcbps_weighted_analysis(
 #'   data = mad_edits, outcome_var = "mpss.mgm_rescale", treatment_var = "my_treatment",
-#'   imputation_vars = c("mother_age"), family = quasibinomial(), ame_scale = 2
+#'   imputation_vars = c("mother_age"), family = quasibinomial()
 #' )
 #'
-#' # Ordinal pregnancy advice (expected-score AME)
+#' # Ordinal pregnancy advice (proportional odds model)
 #' res_adv <- npcbps_weighted_analysis(
 #'   data = mad_edits, outcome_var = "preg_ad_ord", treatment_var = "my_treatment",
 #'   imputation_vars = c("mother_age"), family = "ordinal"
 #' )
 #'
-#' # Ordinal food provisioning, AME on P(more than once a week or every day)
-#' res_food <- npcbps_weighted_analysis(
-#'   data = mad_edits, outcome_var = "food_ord", treatment_var = "my_treatment",
-#'   imputation_vars = c("mother_age"), family = "ordinal",
-#'   ame_hypothesis = c(0, 0, 0, 1, 1)
-#' )
-#'
-#' res_food$pooled_ame        # PRIMARY effect estimate
-#' res_food$pooled_results    # model coefficients (log-odds)
-#' res_food$balance_summary   # balance across imputations
+#' res_adv$pooled_results    # PRIMARY effect: log-odds, with odds ratios in exp_* columns
+#' res_adv$balance_summary   # balance across imputations
 #' }
 #'
 #' @export
@@ -166,7 +148,7 @@
 #' @importFrom cobalt bal.tab
 #' @importFrom tibble tibble
 #' @importFrom sandwich vcovHC sandwich
-#' @importFrom stats glm as.formula coef quantile sd vcov qt pt var setNames
+#' @importFrom stats glm as.formula coef quantile sd vcov qt pt var setNames cov complete.cases
 npcbps_weighted_analysis <- function(
     data,
     outcome_var,
@@ -188,9 +170,7 @@ npcbps_weighted_analysis <- function(
     robust_se = TRUE,
     se_type = "HC0",
     family = gaussian(),
-    ame_hypothesis = NULL,
-    ame_scale = 1,
-    ame_boot_n = 500,
+    ordinal_boot_n = 500,
     verbose = TRUE
 ) {
 
@@ -208,9 +188,6 @@ npcbps_weighted_analysis <- function(
   } else {
     paste(family$family, "with", family$link, "link")
   }
-  if (!is.null(ame_hypothesis) && !is_ordinal) {
-    warning("`ame_hypothesis` only applies to ordinal outcomes and will be ignored.", call. = FALSE)
-  }
 
   # Load required libraries (attached)
   required_packages <- c("dplyr", "mice", "purrr", "WeightIt", "cobalt", "tibble")
@@ -220,8 +197,8 @@ npcbps_weighted_analysis <- function(
       stop(paste("Package", pkg, "is required but not installed."))
     }
   }
-  # ---- NEW: packages used via :: only (not attached; avoids MASS::select masking dplyr) ----
-  namespace_packages <- c("marginaleffects", if (is_ordinal) "MASS")
+  # Packages used via :: only (not attached; avoids MASS::select masking dplyr)
+  namespace_packages <- if (is_ordinal) "MASS" else character(0)
   for (pkg in namespace_packages) {
     if (!requireNamespace(pkg, quietly = TRUE)) {
       stop(paste("Package", pkg, "is required but not installed."))
@@ -311,11 +288,6 @@ npcbps_weighted_analysis <- function(
     if (n_out_levels < 3) {
       stop("Ordinal outcome '", outcome_var, "' has only ", n_out_levels,
            " observed levels; polr needs at least 3. Use family = quasibinomial() for a binary outcome.")
-    }
-    if (!is.null(ame_hypothesis) && length(ame_hypothesis) != n_out_levels) {
-      stop("`ame_hypothesis` has length ", length(ame_hypothesis), " but '", outcome_var,
-           "' has ", n_out_levels, " observed levels (",
-           paste(levels(df_clean[[outcome_var]]), collapse = ", "), ").")
     }
     if (verbose) {
       cat("Ordinal outcome levels:", paste(levels(df_clean[[outcome_var]]), collapse = " < "), "\n")
@@ -495,7 +467,7 @@ npcbps_weighted_analysis <- function(
                          printFlag = FALSE)
 
     # KEEP IMPUTATIONS SEPARATE - don't average!
-    imputed_datasets <- map(1:mice_m, ~complete(imputed_data, .x) %>%
+    imputed_datasets <- map(1:mice_m, ~mice::complete(imputed_data, .x) %>%
                               dplyr::select(all_of(imputation_vars)))
 
     if (verbose) cat("  Created", mice_m, "imputed datasets\n")
@@ -538,8 +510,10 @@ npcbps_weighted_analysis <- function(
   # 4. ANALYZE EACH IMPUTATION SEPARATELY
   if (verbose) cat("Step 4: Analyzing each imputed dataset separately...\n")
 
+  # FIXED: propensity covariates that are not imputed are carried into every imputation
   outcome_treatment_data <- df_clean %>%
-    dplyr::select(all_of(c(outcome_var, treatment_var, actual_predictor_vars)))
+    dplyr::select(all_of(unique(c(outcome_var, treatment_var, actual_predictor_vars,
+                                  setdiff(propensity_covariates, imputation_vars)))))
 
   ps_covariate_vars <- c(imputation_vars, propensity_covariates)
   ps_formula <- as.formula(paste(treatment_var, "~", paste(ps_covariate_vars, collapse = " + ")))
@@ -551,7 +525,9 @@ npcbps_weighted_analysis <- function(
     cat("DEBUG: Outcome formula:", deparse(outcome_formula), "\n")
     cat("DEBUG: Outcome family:", fam_label, "\n")
     cat("DEBUG: Standard errors:",
-        if (is_ordinal) paste0("coefficients model-based (Hessian); AME bootstrap (B = ", ame_boot_n, ", weights fixed)") else if (!robust_se) "model-based" else paste0("robust (", se_type, ")"),
+        if (is_ordinal) {
+          if (ordinal_boot_n > 0) paste0("bootstrap (B = ", ordinal_boot_n, ", weights fixed)") else "model-based (Hessian)"
+        } else if (!robust_se) "model-based" else paste0("robust (", se_type, ")"),
         "\n")
   }
 
@@ -569,8 +545,8 @@ npcbps_weighted_analysis <- function(
     m
   }
 
-  # ---- NEW: variance-covariance for pooling (full = TRUE keeps polr thresholds) ----
-  vcov_fallback_warned <- FALSE
+  # Variance-covariance for pooling (full = TRUE keeps polr thresholds).
+  # For ordinal models this Hessian vcov is replaced by the bootstrap vcov when ordinal_boot_n > 0.
   get_vcov <- function(m, full = FALSE) {
     V <- if (!robust_se) {
       vcov(m)
@@ -584,107 +560,42 @@ npcbps_weighted_analysis <- function(
     V[keep, keep, drop = FALSE]
   }
 
-  # ---- FIXED: ordinal AME computed directly from predicted probabilities ----
-  # Scores are keyed by outcome level, so levels dropped in a bootstrap resample are handled.
-  ordinal_ame_point <- function(fit, d, w) {
-    lv_all <- levels(df_clean[[outcome_var]])
-    h <- if (is.null(ame_hypothesis)) seq_along(lv_all) - 1 else ame_hypothesis
-    names(h) <- lv_all
-    score_fun <- function(nd) {
-      p <- predict(fit, nd, type = "probs")
-      if (is.null(dim(p))) p <- matrix(p, nrow = 1, dimnames = list(NULL, names(p)))
-      as.vector(p %*% h[colnames(p)])
+  # ---- NEW: bootstrap vcov of the polr slope coefficients (weights held fixed) ----
+  ordinal_boot_vcov <- function(m, d, w, seed) {
+    cf_names <- names(coef(m))
+    na_out <- rep(NA_real_, length(cf_names))
+    set.seed(seed)
+    boot <- replicate(ordinal_boot_n, {
+      idx <- sample(nrow(d), replace = TRUE)
+      db <- d[idx, , drop = FALSE]
+      wb <- w[idx]
+      if (length(unique(db[[treatment_var]])) < 2) return(na_out)
+      fb <- tryCatch(suppressWarnings(fit_outcome(db, wb)), error = function(e) NULL)
+      if (is.null(fb) || !isTRUE(fb$converged)) return(na_out)
+      unname(coef(fb)[cf_names])
+    })
+    # rows = resamples, columns = coefficients (works for one or several coefficients)
+    coef_boot <- matrix(boot, ncol = length(cf_names), byrow = TRUE,
+                        dimnames = list(NULL, cf_names))
+    ok <- stats::complete.cases(coef_boot)
+    n_ok <- sum(ok)
+    if (n_ok < 10) stop("Too few successful bootstrap samples (", n_ok, ").")
+    if (n_ok < 0.9 * ordinal_boot_n) {
+      warning("Ordinal bootstrap: only ", n_ok, " of ", ordinal_boot_n,
+              " resamples succeeded.", call. = FALSE)
     }
-    tv <- d[[treatment_var]]
-    d1 <- d
-    d0 <- d
-    if (treatment_type == "binary") {
-      vals <- if (is.factor(tv)) levels(droplevels(tv)) else sort(unique(tv))
-      if (is.factor(tv)) {
-        d1[[treatment_var]] <- factor(rep(vals[2], nrow(d)), levels = levels(tv))
-        d0[[treatment_var]] <- factor(rep(vals[1], nrow(d)), levels = levels(tv))
-      } else {
-        d1[[treatment_var]] <- vals[2]
-        d0[[treatment_var]] <- vals[1]
-      }
-      diffs <- score_fun(d1) - score_fun(d0)
-    } else {
-      eps <- 1e-4 * stats::sd(tv)
-      d1[[treatment_var]] <- tv + eps
-      d0[[treatment_var]] <- tv - eps
-      diffs <- (score_fun(d1) - score_fun(d0)) / (2 * eps)
-    }
-    stats::weighted.mean(diffs, w)
-  }
+    coef_boot <- coef_boot[ok, , drop = FALSE]
 
-  # ---- weighted average marginal effect of the treatment ----
-  # Ordinal: point estimate from predicted probabilities, SE from a nonparametric
-  #   bootstrap within the imputation (weights treated as fixed). The delta method with
-  #   the polr sandwich vcov gave unreliable SEs for these AMEs.
-  # glm families: marginaleffects with the robust vcov (delta method).
-  compute_ame <- function(m, d, w, seed = NULL) {
-    if (is_ordinal) {
-      est <- ordinal_ame_point(m, d, w)
-      if (!is.null(seed)) set.seed(seed)
-      # Each resample returns c(AME, slope coefficients); the slope covariance
-      # replaces the polr sandwich vcov for pooling the coefficients.
-      cf_names <- names(coef(m))
-      na_out <- rep(NA_real_, 1 + length(cf_names))
-      boot <- replicate(ame_boot_n, {
-        idx <- sample(nrow(d), replace = TRUE)
-        db <- d[idx, , drop = FALSE]
-        wb <- w[idx]
-        if (length(unique(db[[treatment_var]])) < 2) return(na_out)
-        fb <- tryCatch(suppressWarnings(fit_outcome(db, wb)), error = function(e) NULL)
-        if (is.null(fb) || !isTRUE(fb$converged)) return(na_out)
-        a <- tryCatch(ordinal_ame_point(fb, db, wb), error = function(e) NA_real_)
-        c(a, unname(coef(fb)[cf_names]))
-      })
-      boot <- matrix(boot, nrow = 1 + length(cf_names))
-      ame_boot <- boot[1, ]
-      coef_boot <- t(boot[-1, , drop = FALSE])
-      colnames(coef_boot) <- cf_names
-      ok <- !is.na(ame_boot) & stats::complete.cases(coef_boot)
-      n_ok <- sum(ok)
-      if (n_ok < 10) stop("Too few successful bootstrap samples (", n_ok, ").")
-      if (n_ok < 0.9 * ame_boot_n) {
-        warning("Ordinal bootstrap: only ", n_ok, " of ", ame_boot_n,
-                " resamples succeeded.", call. = FALSE)
-      }
-      return(list(estimate = est * ame_scale,
-                  variance = stats::var(ame_boot[ok]) * ame_scale^2,
-                  n_boot_ok = n_ok,
-                  coef_boot = coef_boot[ok, , drop = FALSE]))
+    n_extreme <- colSums(abs(coef_boot) > 10)
+    if (any(n_extreme > 0)) {
+      warning("Ordinal bootstrap: draws with |log-odds| > 10 (possible separation) for ",
+              paste0(names(n_extreme)[n_extreme > 0], " (", n_extreme[n_extreme > 0], " draws)",
+                     collapse = ", "),
+              ". These can inflate the bootstrap SE; inspect imputation_results[[i]]$coef_boot.",
+              call. = FALSE)
     }
 
-    d$.w <- w
-    args <- list(m, newdata = d, wts = w, vcov = get_vcov(m, full = TRUE))
-
-    if (treatment_type == "binary") {
-      tv <- d[[treatment_var]]
-      contrast_vals <- if (is.factor(tv)) levels(droplevels(tv)) else sort(unique(tv))
-      args$variables <- stats::setNames(list(contrast_vals), treatment_var)
-      me_fun <- marginaleffects::avg_comparisons
-    } else {
-      args$variables <- treatment_var
-      me_fun <- marginaleffects::avg_slopes
-    }
-
-    ame <- tryCatch(
-      do.call(me_fun, args),
-      error = function(e) {
-        # Retry with model-based vcov if the robust matrix is not accepted
-        args$vcov <- TRUE
-        warning("AME with robust vcov failed (", e$message,
-                "); retried with model-based vcov.", call. = FALSE)
-        do.call(me_fun, args)
-      }
-    )
-
-    if (nrow(ame) != 1) stop("Expected one AME row, got ", nrow(ame), ".")
-    list(estimate = ame$estimate * ame_scale,
-         variance = ame$std.error^2 * ame_scale^2,
-         n_boot_ok = NA_integer_)
+    list(vcov = stats::cov(coef_boot), coef_boot = coef_boot, n_boot_ok = n_ok)
   }
 
   imputation_results <- list()
@@ -729,15 +640,26 @@ npcbps_weighted_analysis <- function(
       weighted_model <- fit_outcome(df_imp, npcbps_weights$weights)
       model_vcov <- get_vcov(weighted_model)
 
-      # ---- NEW: AME (failure here does not drop the imputation) ----
-      ame_i <- tryCatch(
-        compute_ame(weighted_model, df_imp, npcbps_weights$weights, seed = bootstrap_seed + imp),
-        error = function(e) {
-          warning(paste("AME failed in imputation", imp, ":", e$message), call. = FALSE)
-          list(estimate = NA_real_, variance = NA_real_, n_boot_ok = NA_integer_)
-        }
-      )
+      coef_boot <- NULL
+      n_boot_ok <- NA_integer_
 
+      # ---- NEW: ordinal bootstrap SEs (failure falls back to the Hessian vcov) ----
+      if (is_ordinal && ordinal_boot_n > 0) {
+        boot_i <- tryCatch(
+          ordinal_boot_vcov(weighted_model, df_imp, npcbps_weights$weights,
+                            seed = bootstrap_seed + imp),
+          error = function(e) {
+            warning(paste("Ordinal bootstrap failed in imputation", imp, ":", e$message,
+                          "- using the Hessian vcov for this imputation."), call. = FALSE)
+            NULL
+          }
+        )
+        if (!is.null(boot_i)) {
+          model_vcov <- boot_i$vcov
+          coef_boot <- boot_i$coef_boot
+          n_boot_ok <- boot_i$n_boot_ok
+        }
+      }
 
       imputation_results[[imp]] <- list(
         data = df_imp,
@@ -747,16 +669,19 @@ npcbps_weighted_analysis <- function(
         model = weighted_model,
         coefficients = coef(weighted_model),
         vcov = model_vcov,
-        ame_estimate = ame_i$estimate,
-        ame_boot_ok = ame_i$n_boot_ok,
-        coef_boot = ame_i$coef_boot,
-        ame_variance = ame_i$variance,
+        coef_boot = coef_boot,
+        n_boot_ok = n_boot_ok,
         n = nrow(df_imp)
       )
 
       if (verbose) {
+        treat_terms <- names(coef(weighted_model))[startsWith(names(coef(weighted_model)), treatment_var)]
         cat(paste("    n =", nrow(df_imp), "- Model converged:", isTRUE(weighted_model$converged),
-                  "- AME =", round(ame_i$estimate, 4), "\n"))
+                  if (length(treat_terms) > 0) paste0("- ", treat_terms[1], " = ",
+                                                      round(coef(weighted_model)[treat_terms[1]], 4),
+                                                      " (SE ", round(sqrt(model_vcov[treat_terms[1], treat_terms[1]]), 4), ")") else "",
+                  if (!is.na(n_boot_ok)) paste0("- bootstrap resamples OK: ", n_boot_ok) else "",
+                  "\n"))
       }
 
     }, error = function(e) {
@@ -880,8 +805,24 @@ npcbps_weighted_analysis <- function(
   }
 
   m <- n_successful
-  df_obs <- imputation_results[[1]]$model$df.residual
-  se_label <- if (is_ordinal) "model_based_hessian" else if (!robust_se) "model_based" else paste0("robust_", se_type)
+  # FIXED: complete-data df = n - parameters for polr (its df.residual depends on the weight scale)
+  mod1 <- imputation_results[[1]]$model
+  df_obs <- if (is_ordinal) {
+    imputation_results[[1]]$n - length(coef(mod1)) - length(mod1$zeta)
+  } else {
+    mod1$df.residual
+  }
+
+  se_label <- if (is_ordinal) {
+    n_boot_used <- sum(!is.na(sapply(imputation_results, `[[`, "n_boot_ok")))
+    if (ordinal_boot_n == 0 || n_boot_used == 0) {
+      "model_based_hessian"
+    } else if (n_boot_used < m) {
+      paste0("bootstrap_B", ordinal_boot_n, "_in_", n_boot_used, "_of_", m, "_imputations_else_hessian")
+    } else {
+      paste0("bootstrap_fixed_weights_B", ordinal_boot_n)
+    }
+  } else if (!robust_se) "model_based" else paste0("robust_", se_type)
 
   # Coefficients (cbind keeps a parameters x imputations matrix even with one coefficient)
   Q_m <- do.call(cbind, lapply(imputation_results, function(x) x$coefficients))
@@ -891,53 +832,34 @@ npcbps_weighted_analysis <- function(
   pooled_results <- pool_rubin(Q_m, U_m, df_obs) %>%
     dplyr::mutate(se_method = se_label)
 
-  # ---- NEW: pooled AME ----
-  ame_by_imputation <- tibble(
-    imputation = seq_len(m),
-    estimate = sapply(imputation_results, `[[`, "ame_estimate"),
-    variance = sapply(imputation_results, `[[`, "ame_variance"),
-    n_boot_ok = sapply(imputation_results, function(x) if (is.null(x$ame_boot_ok)) NA_integer_ else as.integer(x$ame_boot_ok))
-  )
-  ame_ok <- !is.na(ame_by_imputation$estimate) & !is.na(ame_by_imputation$variance)
-
-  pooled_ame <- NULL
-  if (sum(ame_ok) > 0) {
-    if (sum(ame_ok) < m) {
-      warning(paste("AME available for only", sum(ame_ok), "of", m, "imputations; pooling those."),
-              call. = FALSE)
-    }
-    ame_label <- paste0("AME_", treatment_var)
-    Q_ame <- matrix(ame_by_imputation$estimate[ame_ok], nrow = 1, dimnames = list(ame_label, NULL))
-    U_ame <- matrix(ame_by_imputation$variance[ame_ok], nrow = 1, dimnames = list(ame_label, NULL))
-    pooled_ame <- pool_rubin(Q_ame, U_ame, df_obs) %>%
+  # ---- NEW: exponentiated estimates for logit/log links (odds ratios / rate ratios) ----
+  use_exp <- is_ordinal || family$link %in% c("logit", "log")
+  if (use_exp) {
+    pooled_results <- pooled_results %>%
       dplyr::mutate(
-        se_method = if (is_ordinal) paste0("bootstrap_fixed_weights_B", ame_boot_n) else se_label,
-        ame_type = if (is_ordinal) {
-          if (is.null(ame_hypothesis)) "expected category score" else
-            paste0("weighted categories (", paste(ame_hypothesis, collapse = ", "), ")")
-        } else "response scale",
-        ame_scale = ame_scale,
-        n_imputations = sum(ame_ok)
+        exp_estimate = exp(estimate),
+        exp_ci_lower = exp(ci_lower),
+        exp_ci_upper = exp(ci_upper)
       )
-  } else {
-    warning("AME could not be computed in any imputation; see earlier warnings.", call. = FALSE)
   }
 
   if (verbose) {
     cat("\nPooled Results (Rubin's Rules - PRIMARY INFERENCE):\n")
     cat("Number of imputations:", m, "\n")
     cat("Outcome model:", fam_label, "\n")
-    if (!is.null(pooled_ame)) {
-      cat("\nAverage marginal effect of", treatment_var, "(", pooled_ame$ame_type, "):\n")
-      print(pooled_ame %>%
-              dplyr::select(term, estimate, se, ci_lower, ci_upper, p.value, fmi),
-            digits = 4)
-    }
+    cat("Standard errors:", se_label, "\n")
     cat("\nCoefficients", if (is_ordinal || family$family != "gaussian") "(link scale)" else "", ":\n")
     print(pooled_results %>%
             dplyr::select(term, estimate, se, ci_lower, ci_upper, p.value, fmi) %>%
             dplyr::filter(term != "(Intercept)"),
           digits = 4)
+    if (use_exp) {
+      cat("\nExponentiated", if (is_ordinal || family$link == "logit") "(odds ratios)" else "(rate/risk ratios)", ":\n")
+      print(pooled_results %>%
+              dplyr::select(term, exp_estimate, exp_ci_lower, exp_ci_upper) %>%
+              dplyr::filter(term != "(Intercept)"),
+            digits = 4)
+    }
   }
 
   # 7. BOOTSTRAP ONE OUTCOME MODEL
@@ -1045,9 +967,7 @@ npcbps_weighted_analysis <- function(
       final = final_n
     ),
 
-    pooled_ame = pooled_ame,                       # PRIMARY EFFECT ESTIMATE (outcome scale)
-    ame_by_imputation = ame_by_imputation,
-    pooled_results = pooled_results,               # coefficients (link scale if non-gaussian)
+    pooled_results = pooled_results,               # PRIMARY EFFECT (link scale if non-gaussian; exp_* columns for logit/log)
     imputation_results = imputation_results,
     balance_by_imputation = balance_by_imputation,
     balance_summary = balance_summary,

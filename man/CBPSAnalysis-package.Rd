@@ -39,5 +39,10 @@ Useful links:
 \author{
 \strong{Maintainer}: Madigan Durham \email{sd6369@gmail.com}
 
+Authors:
+\itemize{
+  \item Madigan Durham \email{sd6369@gmail.com}
+}
+
 }
 \keyword{internal}
