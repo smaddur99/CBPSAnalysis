@@ -7,8 +7,10 @@
 quick_results_summary(cbps_results)
 }
 \arguments{
-\item{cbps_results}{List. Output from \code{npcbps_weighted_analysis()}}
+\item{cbps_results}{List. Output from \code{npcbps_weighted_analysis()} or
+\code{cbps_weighted_analysis()}}
 }
 \description{
-Quick Results Summary for Visualization
+One row per model term with the pooled (Rubin's rules) result, the exponentiated
+estimate for logit/log links, the imputation-1 estimate, and the bootstrap estimate.
 }

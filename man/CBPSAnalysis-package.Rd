@@ -16,14 +16,7 @@ bootstrapping, and publication-ready result tables.
 \item \code{\link{cbps_weighted_analysis}}: Main CBPS analysis function
 \item \code{\link{npcbps_weighted_analysis}}: Nonparametric CBPS analysis function
 \item \code{\link{extract_cbps_results}}: Extract and structure results
-\item \code{\link{check_treatment_significance}}: Compare treatment effects across models
-\item \code{\link{create_significance_table}}: Create publication tables with covariate balance column
-\item \code{\link{create_f_sig_table}}: Create publication tables without covariate balance column
-\item \code{\link{create_balance_table}}: Create publication tables for only covariate balance
-\item \code{\link{quick_coef_table}}: Create quick coefficient table
-\item \code{\link{create_sens_table}}: Create sensitivity model table
-\item \code{\link{prepare_sens_table_data}}: Preparing data to create sensitivity model table
-\item \code{\link{create_balance_table_grouped}}: Create publication tables for only covariate balance -  sensitivity model table
+\item \code{\link{export_cbps_excel}}: Exports results into excel for easy conversion into other formatting
 
 }
 }

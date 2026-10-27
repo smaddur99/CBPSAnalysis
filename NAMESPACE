@@ -8,6 +8,7 @@ export(quick_results_summary)
 importFrom(WeightIt,weightit)
 importFrom(cobalt,bal.tab)
 importFrom(dplyr,
+  "%>%",
   across,
   all_of,
   any_of,
@@ -48,8 +49,9 @@ importFrom(stats,
   coef,
   complete.cases,
   cov,
+  gaussian,
   glm,
-  na.omit,
+  median,
   pt,
   qt,
   quantile,

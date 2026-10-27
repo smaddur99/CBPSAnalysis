@@ -62,7 +62,7 @@ cbps_weighted_analysis(
 
 \item{balance_threshold_m}{Numeric. |SMD| threshold, binary treatments (default: 0.1)}
 
-\item{balance_threshold_v}{Numeric. Variance ratio threshold; VR must fall in \link{1/v, v} (default: 2)}
+\item{balance_threshold_v}{Numeric. Variance ratio threshold; VR must fall between 1/v and v (default: 2)}
 
 \item{balance_threshold_r}{Numeric. |r| threshold, continuous treatments (default: 0.1)}
 

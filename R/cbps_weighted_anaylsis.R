@@ -57,7 +57,7 @@
 #' @param bootstrap_seed Integer. Random seed for bootstrap (default: 20250417)
 #' @param bootstrap_imputation Integer. Which imputation to bootstrap (default: 1)
 #' @param balance_threshold_m Numeric. |SMD| threshold, binary treatments (default: 0.1)
-#' @param balance_threshold_v Numeric. Variance ratio threshold; VR must fall in [1/v, v] (default: 2)
+#' @param balance_threshold_v Numeric. Variance ratio threshold; VR must fall between 1/v and v (default: 2)
 #' @param balance_threshold_r Numeric. |r| threshold, continuous treatments (default: 0.1)
 #' @param robust_type Character. Sandwich SE type for glm families (default: "HC0").
 #'   Not used for ordinal models (see \code{ordinal_boot_n}).
@@ -130,7 +130,7 @@
 #' @importFrom cobalt bal.tab
 #' @importFrom tibble tibble
 #' @importFrom sandwich vcovHC
-#' @importFrom stats glm as.formula coef quantile sd vcov qt pt var na.omit setNames cov complete.cases
+#' @importFrom stats glm as.formula coef quantile sd vcov qt pt var setNames cov complete.cases gaussian median
 cbps_weighted_analysis <- function(
     data,
     outcome_var,

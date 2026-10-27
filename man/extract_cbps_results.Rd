@@ -2,7 +2,7 @@
 % Please edit documentation in R/extract_cbps_results.R
 \name{extract_cbps_results}
 \alias{extract_cbps_results}
-\title{Extract NPCBPS Results into Structured Format}
+\title{Extract NPCBPS / CBPS Results into Structured Format}
 \usage{
 extract_cbps_results(
   cbps_results,
@@ -14,7 +14,8 @@ extract_cbps_results(
 )
 }
 \arguments{
-\item{cbps_results}{List. Output from \code{npcbps_weighted_analysis()}}
+\item{cbps_results}{List. Output from \code{npcbps_weighted_analysis()} or
+\code{cbps_weighted_analysis()}}
 
 \item{include_balance_details}{Logical. Return full list (TRUE) or a simple
 estimates data frame (FALSE). Default TRUE.}
@@ -31,39 +32,50 @@ object has no stored vcov (default "HC0")}
 \value{
 If \code{include_balance_details = TRUE}, a list containing:
 \itemize{
-\item \code{estimates}: Imputation-1 model estimates (robust SEs) + bootstrap,
-with pooled AME columns on the treatment row
+\item \code{estimates}: Imputation-1 model estimates + bootstrap, with the pooled
+(Rubin's rules) results joined on as \code{pooled_*} / \code{exp_*} columns
 \item \code{balance}: Per-covariate balance summarized across imputations
 \item \code{balance_by_imputation}: One row per covariate per imputation
 \item \code{sample_sizes}: Sample size information
 \item \code{summary_stats}: Overall balance metrics across imputations
-\item \code{pooled_estimates}: Rubin's rules pooled coefficients
-\item \code{pooled_ame}: Rubin's rules pooled AME (PRIMARY EFFECT, outcome scale)
-\item \code{ame_by_imputation}: AME estimate and variance from each imputation
+\item \code{pooled_estimates}: Rubin's rules pooled coefficients (PRIMARY EFFECT),
+with \code{exp_*} columns for logit/log links
 \item \code{treatment_type}: "binary" or "continuous"
 \item \code{balance_statistic}: "|SMD|" or "|r|"
 \item \code{family_label}: description of the outcome model
 \item \code{coef_scale}: "response" or "link"
+\item \code{exp_label}: "odds ratio", "rate/risk ratio", or NA
 }
+If \code{include_balance_details = FALSE}, the \code{estimates} data frame with
+model and sample-size columns added.
 }
 \description{
-Extracts key results from \code{npcbps_weighted_analysis()} into a structured
-format suitable for tables, visualization, and further analysis.
+Extracts key results from \code{npcbps_weighted_analysis()} or
+\code{cbps_weighted_analysis()} into a structured format suitable for tables,
+visualization, Excel export (\code{export_cbps_excel()}), and further analysis.
 }
 \details{
-REVISION NOTES (changes for the updated npcbps_weighted_analysis):
+REVISION NOTES (changes for the AME-free analysis functions):
 \itemize{
-\item NEW: returns the pooled average marginal effect (\code{pooled_ame}) and the
-per-imputation AMEs (\code{ame_by_imputation}). AME columns are also joined onto
-the treatment row of \code{estimates}, so \code{quick_results_summary()} shows them.
-\item CHANGED: single-imputation SEs now reuse the vcov the analysis function already
-computed (\code{imputation_results[[1]]$vcov}). This works for glm families and for
-ordinal (polr) models, where \code{sandwich::vcovHC()} is not available. Falls back
-to recomputing for older results objects that lack a stored vcov.
-\item NEW: returns \code{family_label} and \code{coef_scale} ("response" for gaussian,
+\item REMOVED: average marginal effects. \code{pooled_ame}, \code{ame_by_imputation}
+and the \code{ame_*} columns are gone. AME outputs in older results objects are ignored.
+\item NEW: the pooled (Rubin's rules) results are joined onto \code{estimates} as
+\code{pooled_*} columns, so \code{quick_results_summary()} shows the reported effect
+next to the imputation-1 and bootstrap estimates.
+\item NEW: exponentiated pooled estimates (\code{exp_estimate}, \code{exp_ci_lower},
+\code{exp_ci_upper}) are passed through for logit/log-link models, and
+\code{exp_label} says what they are ("odds ratio" or "rate/risk ratio").
+\item CHANGED: packages are checked with \code{requireNamespace()} instead of being
+attached with \code{require()}.
+}
+
+Earlier revision notes:
+\itemize{
+\item Single-imputation SEs reuse the vcov the analysis function stored
+(\code{imputation_results[[1]]$vcov}): robust for glm families, bootstrap for ordinal
+models. Falls back to recomputing for older results objects without a stored vcov.
+\item Returns \code{family_label} and \code{coef_scale} ("response" for gaussian,
 "link" otherwise) so tables can say whether coefficients are log-odds.
-\item Works with results from the previous version of npcbps_weighted_analysis
-(no AME): AME outputs are then NULL / NA.
 }
 
 Balance is summarized across ALL imputations using the statistic appropriate
@@ -73,6 +85,6 @@ to the treatment type:
 plus variance ratio (secondary)
 \item Continuous treatment: |r|, the weighted treatment-covariate correlation
 }
-Pooled (Rubin's rules) estimates remain the primary results; for non-gaussian
-outcomes, report \code{pooled_ame} as the effect on the outcome scale.
+The pooled (Rubin's rules) estimates are the primary results. For ordinal and
+logit models, report the odds ratios in the \code{exp_*} columns.
 }

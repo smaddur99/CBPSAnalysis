@@ -1,6 +1,6 @@
 Package: CBPSAnalysis
 Title: CBPS Weighted Analysis and Model Comparison Tools
-Version: 1.2.5
+Version: 1.3.0
 Authors@R: 
     person("Madigan", "Durham", , "sd6369@gmail.com", role = c("aut", "cre"))
 Description: A comprehensive toolkit for Covariate Balancing Propensity Score (CBPS) 
@@ -9,22 +9,21 @@ Description: A comprehensive toolkit for Covariate Balancing Propensity Score (C
 License: MIT + file LICENSE
 Encoding: UTF-8
 Roxygen: list(markdown = TRUE)
-RoxygenNote: 7.3.3
-Imports: 
-    dplyr (>= 1.0.0),
+Imports:
+    cobalt,
+    dplyr,
+    magrittr,
+    MASS,
     mice,
     purrr,
-    WeightIt,
-    cobalt,
-    tibble,
-    broom,
-    gt (>= 1.0.0),
-    stats,
-    magrittr,
     rlang,
-    utils
-Suggests: 
+    sandwich,
+    tibble,
+    WeightIt
+Suggests:
     naniar,
+    openxlsx,
     testthat (>= 3.0.0)
 URL: https://github.com/smaddur99/CBPSAnalysis
 BugReports: https://github.com/smaddur99/CBPSAnalysis/issues
+Config/roxygen2/version: 8.1.0

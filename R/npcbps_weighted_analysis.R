@@ -56,7 +56,7 @@
 #' @param bootstrap_seed Integer. Random seed for bootstrap (default: 20250417)
 #' @param bootstrap_imputation Integer. Which imputation to use for bootstrap (default: 1)
 #' @param balance_threshold_m Numeric. |SMD| threshold for binary treatments (default: 0.1)
-#' @param balance_threshold_v Numeric. Variance ratio threshold for binary treatments (default: 2)
+#' @param balance_threshold_v Numeric. Variance ratio threshold; VR must fall between 1/v and v (default: 2)
 #' @param balance_threshold_r Numeric. |r| threshold for continuous treatments (default: 0.1)
 #' @param robust_se Logical. Use robust (sandwich) standard errors for pooling (default: TRUE)
 #' @param se_type Character. Sandwich estimator type passed to \code{sandwich::vcovHC} for glm
@@ -148,7 +148,7 @@
 #' @importFrom cobalt bal.tab
 #' @importFrom tibble tibble
 #' @importFrom sandwich vcovHC sandwich
-#' @importFrom stats glm as.formula coef quantile sd vcov qt pt var setNames cov complete.cases
+#' @importFrom stats glm as.formula coef quantile sd vcov qt pt var setNames cov complete.cases gaussian median
 npcbps_weighted_analysis <- function(
     data,
     outcome_var,
